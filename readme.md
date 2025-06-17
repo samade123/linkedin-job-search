@@ -83,7 +83,7 @@ You have a few options for starting the server:
     To pass command-line arguments:
 
     ```
-    npm start -- --keyword="React" --location="London" --limit="50"
+    `node dist/server.js -- --keyword="React" --location="London"` 
 
     ```
 
