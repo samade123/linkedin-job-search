@@ -83,7 +83,7 @@ You have a few options for starting the server:
     To pass command-line arguments:
 
     ```
-    `node dist/server.js -- --keyword="React" --location="London"` 
+    node dist/server.js -- --keyword="React" --location="London" 
 
     ```
 
