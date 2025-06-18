@@ -2,9 +2,15 @@
 import express, { Request, Response } from 'express';
 import path from 'path';
 import linkedIn from 'linkedin-jobs-api'; // Import the LinkedIn Jobs API
+import open from 'open'; // Import the 'open' package to open the browser
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// Global variables to cache job data and error message after initial fetch
+let cachedJobs: Job[] = [];
+let cachedErrorMessage: string = '';
+let isInitialFetchComplete: boolean = false; // Flag to ensure browser opens only once after initial fetch
 
 // Define an interface for the job object structure based on actual API response
 interface Job {
@@ -44,6 +50,33 @@ function escapeHtml(unsafe: string): string {
         .replace(/'/g, "&#039;");
 }
 
+// Function to display help message and exit
+function showHelpAndExit() {
+    console.log(`
+Usage: npm start [--keyword="<keywords>"] [--location="<location>"] [--dateSincePosted="<timeframe>"] [--limit="<number>"] [--jobType="<type>"] [--remoteFilter="<filter>"] [--salary="<salary_range>"] [--experienceLevel="<level>"] [--sortBy="<sort_order>"]
+
+Note: Job search is performed once when the server starts based on these parameters.
+      The browser will open automatically after the initial search.
+
+Options:
+  --keyword          : Search terms (e.g., "React, Node.js"). Default: "Vue.js, Angular"
+  --location         : Job location (e.g., "London", "Remote"). Default: "" (global)
+  --dateSincePosted  : Filter by post date. Valid values: "24hr", "past Week", "past Month", "". Default: "past Week"
+  --limit            : Number of jobs returned. (e.g., "10", "100"). Default: "100"
+  --jobType          : Type of position. Valid values: "full time", "part time", "contract", "temporary", "volunteer", "internship", "". Default: ""
+  --remoteFilter     : Filter telecommuting. Valid values: "on site", "remote", "hybrid", "". Default: ""
+  --salary           : Minimum salary. Valid values: "40000", "60000", "80000", "100000", "120000", "". Default: ""
+  --experienceLevel  : Required experience. Valid values: "internship", "entry level", "associate", "senior", "director", "executive", "". Default: ""
+  --sortBy           : Result ordering. Valid values: "recent", "relevant". Default: "recent"
+  --help             : Show this help message and exit.
+
+Example:
+  npm start -- --keyword="TypeScript" --location="Remote" --dateSincePosted="24hr" --limit="50"
+    `);
+    process.exit(0); // Exit the process
+}
+
+
 // Function to parse command-line arguments
 function parseCommandLineArgs(): Partial<QueryOptions> {
     const args: Partial<QueryOptions> = {};
@@ -51,9 +84,12 @@ function parseCommandLineArgs(): Partial<QueryOptions> {
     // We start parsing from index 2
     for (let i = 2; i < process.argv.length; i++) {
         const arg = process.argv[i];
+        if (arg === '--help' || arg ==='-h') {
+            showHelpAndExit();
+        }
         if (arg.startsWith('--')) {
             const [key, value] = arg.substring(2).split('=');
-            if (key && value) {
+            if (key && value !== undefined) { // Check for undefined to allow empty string values
                 // Type casting for known keys to match QueryOptions
                 switch (key) {
                     case 'keyword':
@@ -62,40 +98,62 @@ function parseCommandLineArgs(): Partial<QueryOptions> {
                         args[key] = value;
                         break;
                     case 'dateSincePosted':
-                        if (['24hr', 'past Week', 'past Month', ''].includes(value)) {
+                        const validDateSincePosted = ['24hr', 'past Week', 'past Month', ''];
+                        if (validDateSincePosted.includes(value)) {
                             args[key] = value as QueryOptions['dateSincePosted'];
+                        } else {
+                            console.warn(`Invalid value for --${key}: "${value}". Must be one of ${validDateSincePosted.map(v => `"${v}"`).join(', ')}. Ignoring.`);
                         }
                         break;
                     case 'jobType':
-                        if (['full time', 'part time', 'contract', 'temporary', 'volunteer', 'internship', ''].includes(value)) {
+                        const validJobTypes = ['full time', 'part time', 'contract', 'temporary', 'volunteer', 'internship', ''];
+                        if (validJobTypes.includes(value)) {
                             args[key] = value as QueryOptions['jobType'];
+                        } else {
+                            console.warn(`Invalid value for --${key}: "${value}". Must be one of ${validJobTypes.map(v => `"${v}"`).join(', ')}. Ignoring.`);
                         }
                         break;
                     case 'remoteFilter':
-                        if (['on site', 'remote', 'hybrid', ''].includes(value)) {
+                        const validRemoteFilters = ['on site', 'remote', 'hybrid', ''];
+                        if (validRemoteFilters.includes(value)) {
                             args[key] = value as QueryOptions['remoteFilter'];
+                        } else {
+                            console.warn(`Invalid value for --${key}: "${value}". Must be one of ${validRemoteFilters.map(v => `"${v}"`).join(', ')}. Ignoring.`);
                         }
                         break;
                     case 'salary':
-                        if (['40000', '60000', '80000', '100000', '120000', ''].includes(value)) {
+                        const validSalaries = ['40000', '60000', '80000', '100000', '120000', ''];
+                        if (validSalaries.includes(value)) {
                             args[key] = value as QueryOptions['salary'];
+                        } else {
+                            console.warn(`Invalid value for --${key}: "${value}". Must be one of ${validSalaries.map(v => `"${v}"`).join(', ')}. Ignoring.`);
                         }
                         break;
                     case 'experienceLevel':
-                        if (['internship', 'entry level', 'associate', 'senior', 'director', 'executive', ''].includes(value)) {
+                        const validExperienceLevels = ['internship', 'entry level', 'associate', 'senior', 'director', 'executive', ''];
+                        if (validExperienceLevels.includes(value)) {
                             args[key] = value as QueryOptions['experienceLevel'];
+                        } else {
+                            console.warn(`Invalid value for --${key}: "${value}". Must be one of ${validExperienceLevels.map(v => `"${v}"`).join(', ')}. Ignoring.`);
                         }
                         break;
                     case 'sortBy':
-                        if (['recent', 'relevant'].includes(value)) {
+                        const validSortBys = ['recent', 'relevant'];
+                        if (validSortBys.includes(value)) {
                             args[key] = value as QueryOptions['sortBy'];
+                        } else {
+                            console.warn(`Invalid value for --${key}: "${value}". Must be one of ${validSortBys.map(v => `"${v}"`).join(', ')}. Ignoring.`);
                         }
                         break;
                     default:
-                        console.warn(`Unknown command-line argument: --${key}`);
+                        console.warn(`Unknown command-line argument: --${key}. Ignoring.`);
                         break;
                 }
+            } else {
+                console.warn(`Invalid command-line argument format: "${arg}". Expected --key=value. Ignoring.`);
             }
+        } else {
+            console.warn(`Unrecognized command-line argument: "${arg}". Expected arguments to start with '--'. Ignoring.`);
         }
     }
     return args;
@@ -125,197 +183,173 @@ function getEffectiveQueryOptions(): QueryOptions {
 
 // Route to fetch and display jobs
 app.get('/', (req: Request, res: Response) => {
-    // Get the effective query options from the dedicated function
-    const queryOptions: QueryOptions = getEffectiveQueryOptions();
+    // Render the page using the cached data.
+    // The queryOptions for the form are derived from the *cached* data's parameters,
+    // which were set at server startup.
+    const queryOptionsForForm = getEffectiveQueryOptions(); // Re-use the logic to populate form fields
 
-    let jobs: Job[] = [];
-    let errorMessage: string = '';
+    res.send(`
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>LinkedIn Job Search (TypeScript)</title>
+            <script src="https://cdn.tailwindcss.com"></script>
+            <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+            <style>
+                body {
+                    font-family: 'Inter', sans-serif;
+                    background-color: #f3f4f6;
+                    color: #333;
+                }
+                .container {
+                    max-width: 1200px;
+                    margin: 2rem auto;
+                    padding: 1.5rem;
+                    background-color: #ffffff;
+                    border-radius: 0.75rem;
+                    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+                }
+                .form-input {
+                    padding: 0.6rem 1rem;
+                    border: 1px solid #d1d5db;
+                    border-radius: 0.5rem;
+                    width: 100%;
+                    box-sizing: border-box;
+                    transition: border-color 0.2s;
+                }
+                .form-input:focus {
+                    outline: none;
+                    border-color: #6366f1; /* Indigo-500 */
+                }
+                .btn {
+                    padding: 0.75rem 1.5rem;
+                    border-radius: 0.5rem;
+                    font-weight: 600;
+                    cursor: pointer;
+                    transition: background-color 0.2s, transform 0.1s;
+                }
+                .btn-primary {
+                    background-color: #6366f1; /* Indigo-500 */
+                    color: #ffffff;
+                    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+                }
+                .btn-primary:hover {
+                    background-color: #4f46e5; /* Indigo-600 */
+                    transform: translateY(-1px);
+                }
+                .btn-secondary {
+                    background-color: #e5e7eb; /* Gray-200 */
+                    color: #374151; /* Gray-700 */
+                    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+                }
+                .btn-secondary:hover {
+                    background-color: #d1d5db; /* Gray-300 */
+                    transform: translateY(-1px);
+                }
+                table {
+                    width: 100%;
+                    border-collapse: collapse;
+                    margin-top: 1.5rem;
+                }
+                th, td {
+                    text-align: left;
+                    padding: 0.8rem 1rem;
+                    border-bottom: 1px solid #e5e7eb; /* Gray-200 */
+                }
+                th {
+                    background-color: #f9fafb; /* Gray-50 */
+                    font-weight: 600;
+                    color: #4b5563; /* Gray-600 */
+                    position: sticky;
+                    top: 0;
+                    z-index: 10;
+                }
+                tbody tr:hover {
+                    background-color: #f3f4f6; /* Gray-100 */
+                }
+                .job-link {
+                    color: #6366f1;
+                    text-decoration: none;
+                }
+                .job-link:hover {
+                    text-decoration: underline;
+                }
+                .filter-section {
+                    display: grid;
+                    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+                    gap: 1rem;
+                }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <h1 class="text-3xl font-bold text-center text-indigo-700 mb-6 rounded-md p-2">LinkedIn Job Search (TypeScript)</h1>
 
-    console.log('Fetching jobs with effective options:', queryOptions);
-
-    // Explicit Promise handling with .then().catch().finally()
-    // Cast linkedIn to 'any' due to lack of declaration file
-    (linkedIn as any).query(queryOptions)
-        .then((response: Job[] | unknown) => {
-            if (Array.isArray(response)) {
-                jobs = response;
-                console.log(`Fetched ${jobs.length} jobs.`);
-            } else {
-                console.warn('API response was not an array or was empty:', response);
-                errorMessage = 'No jobs found or unexpected API response format.';
-            }
-        })
-        .catch((error: any) => {
-            console.error('Error fetching jobs:', error);
-            errorMessage = `Failed to fetch jobs: ${error.message || 'Unknown error'}. Please try again later.`;
-            if (error.response && error.response.status === 429) {
-                errorMessage += " You might have hit a rate limit. Please wait and try again.";
-            }
-        })
-        .finally(() => {
-            // This ensures res.send is called after the promise resolves or rejects
-            res.send(`
-                <!DOCTYPE html>
-                <html lang="en">
-                <head>
-                    <meta charset="UTF-8">
-                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                    <title>LinkedIn Job Search (TypeScript)</title>
-                    <script src="https://cdn.tailwindcss.com"></script>
-                    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-                    <style>
-                        body {
-                            font-family: 'Inter', sans-serif;
-                            background-color: #f3f4f6;
-                            color: #333;
-                        }
-                        .container {
-                            max-width: 1200px;
-                            margin: 2rem auto;
-                            padding: 1.5rem;
-                            background-color: #ffffff;
-                            border-radius: 0.75rem;
-                            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-                        }
-                        .form-input {
-                            padding: 0.6rem 1rem;
-                            border: 1px solid #d1d5db;
-                            border-radius: 0.5rem;
-                            width: 100%;
-                            box-sizing: border-box;
-                            transition: border-color 0.2s;
-                        }
-                        .form-input:focus {
-                            outline: none;
-                            border-color: #6366f1; /* Indigo-500 */
-                        }
-                        .btn {
-                            padding: 0.75rem 1.5rem;
-                            border-radius: 0.5rem;
-                            font-weight: 600;
-                            cursor: pointer;
-                            transition: background-color 0.2s, transform 0.1s;
-                        }
-                        .btn-primary {
-                            background-color: #6366f1; /* Indigo-500 */
-                            color: #ffffff;
-                            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-                        }
-                        .btn-primary:hover {
-                            background-color: #4f46e5; /* Indigo-600 */
-                            transform: translateY(-1px);
-                        }
-                        .btn-secondary {
-                            background-color: #e5e7eb; /* Gray-200 */
-                            color: #374151; /* Gray-700 */
-                            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
-                        }
-                        .btn-secondary:hover {
-                            background-color: #d1d5db; /* Gray-300 */
-                            transform: translateY(-1px);
-                        }
-                        table {
-                            width: 100%;
-                            border-collapse: collapse;
-                            margin-top: 1.5rem;
-                        }
-                        th, td {
-                            text-align: left;
-                            padding: 0.8rem 1rem;
-                            border-bottom: 1px solid #e5e7eb; /* Gray-200 */
-                        }
-                        th {
-                            background-color: #f9fafb; /* Gray-50 */
-                            font-weight: 600;
-                            color: #4b5563; /* Gray-600 */
-                            position: sticky;
-                            top: 0;
-                            z-index: 10;
-                        }
-                        tbody tr:hover {
-                            background-color: #f3f4f6; /* Gray-100 */
-                        }
-                        .job-link {
-                            color: #6366f1;
-                            text-decoration: none;
-                        }
-                        .job-link:hover {
-                            text-decoration: underline;
-                        }
-                        .filter-section {
-                            display: grid;
-                            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-                            gap: 1rem;
-                        }
-                    </style>
-                </head>
-                <body>
-                    <div class="container">
-                        <h1 class="text-3xl font-bold text-center text-indigo-700 mb-6 rounded-md p-2">LinkedIn Job Search (TypeScript)</h1>
-
-                        <form id="filterForm" class="mb-8 p-6 bg-gray-50 rounded-lg shadow-sm">
-                            <div class="filter-section mb-4">
-                                <div>
-                                    <label for="keyword" class="block text-sm font-medium text-gray-700 mb-1">Keywords (comma-separated):</label>
-                                    <input type="text" id="keyword" name="keyword" class="form-input" value="${escapeHtml(queryOptions.keyword)}">
-                                </div>
-                                <div>
-                                    <label for="location" class="block text-sm font-medium text-gray-700 mb-1">Location:</label>
-                                    <input type="text" id="location" name="location" class="form-input" value="${escapeHtml(queryOptions.location)}">
-                                </div>
-                                <div>
-                                    <label for="dateSincePosted" class="block text-sm font-medium text-gray-700 mb-1">Date Posted:</label>
-                                    <select id="dateSincePosted" name="dateSincePosted" class="form-input">
-                                        <option value="past Week" ${queryOptions.dateSincePosted === 'past Week' ? 'selected' : ''}>Past Week</option>
-                                        <option value="24hr" ${queryOptions.dateSincePosted === '24hr' ? 'selected' : ''}>Past 24 Hours</option>
-                                        <option value="past Month" ${queryOptions.dateSincePosted === 'past Month' ? 'selected' : ''}>Past Month</option>
-                                        <option value="" ${queryOptions.dateSincePosted === '' ? 'selected' : ''}>Anytime</option>
-                                    </select>
-                                </div>
-                                <div>
-                                    <label for="limit" class="block text-sm font-medium text-gray-700 mb-1">Limit:</label>
-                                    <input type="number" id="limit" name="limit" class="form-input" value="${escapeHtml(queryOptions.limit)}" min="1" max="1000">
-                                </div>
-                                <div>
-                                    <label for="jobType" class="block text-sm font-medium text-gray-700 mb-1">Job Type:</label>
-                                    <select id="jobType" name="jobType" class="form-input">
-                                        <option value="" ${queryOptions.jobType === '' ? 'selected' : ''}>Any</option>
-                                        <option value="full time" ${queryOptions.jobType === 'full time' ? 'selected' : ''}>Full-time</option>
-                                        <option value="part time" ${queryOptions.jobType === 'part time' ? 'selected' : ''}>Part-time</option>
-                                        <option value="contract" ${queryOptions.jobType === 'contract' ? 'selected' : ''}>Contract</option>
-                                        <option value="temporary" ${queryOptions.jobType === 'temporary' ? 'selected' : ''}>Temporary</option>
-                                        <option value="volunteer" ${queryOptions.jobType === 'volunteer' ? 'selected' : ''}>Volunteer</option>
-                                        <option value="internship" ${queryOptions.jobType === 'internship' ? 'selected' : ''}>Internship</option>
-                                    </select>
-                                </div>
-                                <div>
-                                    <label for="remoteFilter" class="block text-sm font-medium text-gray-700 mb-1">Remote:</label>
-                                    <select id="remoteFilter" name="remoteFilter" class="form-input">
-                                        <option value="" ${queryOptions.remoteFilter === '' ? 'selected' : ''}>Any</option>
-                                        <option value="remote" ${queryOptions.remoteFilter === 'remote' ? 'selected' : ''}>Remote</option>
-                                        <option value="on site" ${queryOptions.remoteFilter === 'on site' ? 'selected' : ''}>On-site</option>
-                                        <option value="hybrid" ${queryOptions.remoteFilter === 'hybrid' ? 'selected' : ''}>Hybrid</option>
-                                    </select>
-                                </div>
-                                <div>
-                                    <label for="experienceLevel" class="block text-sm font-medium text-gray-700 mb-1">Experience Level:</label>
-                                    <select id="experienceLevel" name="experienceLevel" class="form-input">
-                                        <option value="" ${queryOptions.experienceLevel === '' ? 'selected' : ''}>Any</option>
-                                        <option value="internship" ${queryOptions.experienceLevel === 'internship' ? 'selected' : ''}>Internship</option>
-                                        <option value="entry level" ${queryOptions.experienceLevel === 'entry level' ? 'selected' : ''}>Entry Level</option>
-                                        <option value="associate" ${queryOptions.experienceLevel === 'associate' ? 'selected' : ''}>Associate</option>
-                                        <option value="senior" ${queryOptions.experienceLevel === 'senior' ? 'selected' : ''}>Senior</option>
-                                        <option value="director" ${queryOptions.experienceLevel === 'director' ? 'selected' : ''}>Director</option>
-                                        <option value="executive" ${queryOptions.experienceLevel === 'executive' ? 'selected' : ''}>Executive</option>
-                                    </select>
-                                </div>
-                                <div>
-                                    <label for="sortBy" class="block text-sm font-medium text-gray-700 mb-1">Sort By:</label>
-                                    <select id="sortBy" name="sortBy" class="form-input">
-                                        <option value="recent" ${queryOptions.sortBy === 'recent' ? 'selected' : ''}>Recent</option>
-                                        <option value="relevant" ${queryOptions.sortBy === 'relevant' ? 'selected' : ''}>Relevant</option>
-                                    </select>
-                                </div>
+                <form id="filterForm" class="mb-8 p-6 bg-gray-50 rounded-lg shadow-sm">
+                    <div class="filter-section mb-4">
+                        <div>
+                            <label for="keyword" class="block text-sm font-medium text-gray-700 mb-1">Keywords (comma-separated):</label>
+                            <input type="text" id="keyword" name="keyword" class="form-input" value="${escapeHtml(queryOptionsForForm.keyword)}">
+                        </div>
+                        <div>
+                            <label for="location" class="block text-sm font-medium text-gray-700 mb-1">Location:</label>
+                            <input type="text" id="location" name="location" class="form-input" value="${escapeHtml(queryOptionsForForm.location)}">
+                        </div>
+                        <div>
+                            <label for="dateSincePosted" class="block text-sm font-medium text-gray-700 mb-1">Date Posted:</label>
+                            <select id="dateSincePosted" name="dateSincePosted" class="form-input">
+                                <option value="past Week" ${queryOptionsForForm.dateSincePosted === 'past Week' ? 'selected' : ''}>Past Week</option>
+                                <option value="24hr" ${queryOptionsForForm.dateSincePosted === '24hr' ? 'selected' : ''}>Past 24 Hours</option>
+                                <option value="past Month" ${queryOptionsForForm.dateSincePosted === 'past Month' ? 'selected' : ''}>Past Month</option>
+                                <option value="" ${queryOptionsForForm.dateSincePosted === '' ? 'selected' : ''}>Anytime</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label for="limit" class="block text-sm font-medium text-gray-700 mb-1">Limit:</label>
+                            <input type="number" id="limit" name="limit" class="form-input" value="${escapeHtml(queryOptionsForForm.limit)}" min="1" max="1000">
+                        </div>
+                        <div>
+                            <label for="jobType" class="block text-sm font-medium text-gray-700 mb-1">Job Type:</label>
+                            <select id="jobType" name="jobType" class="form-input">
+                                <option value="" ${queryOptionsForForm.jobType === '' ? 'selected' : ''}>Any</option>
+                                <option value="full time" ${queryOptionsForForm.jobType === 'full time' ? 'selected' : ''}>Full-time</option>
+                                <option value="part time" ${queryOptionsForForm.jobType === 'part time' ? 'selected' : ''}>Part-time</option>
+                                <option value="contract" ${queryOptionsForForm.jobType === 'contract' ? 'selected' : ''}>Contract</option>
+                                <option value="temporary" ${queryOptionsForForm.jobType === 'temporary' ? 'selected' : ''}>Temporary</option>
+                                <option value="volunteer" ${queryOptionsForForm.jobType === 'volunteer' ? 'selected' : ''}>Volunteer</option>
+                                <option value="internship" ${queryOptionsForForm.jobType === 'internship' ? 'selected' : ''}>Internship</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label for="remoteFilter" class="block text-sm font-medium text-gray-700 mb-1">Remote:</label>
+                            <select id="remoteFilter" name="remoteFilter" class="form-input">
+                                <option value="" ${queryOptionsForForm.remoteFilter === '' ? 'selected' : ''}>Any</option>
+                                <option value="remote" ${queryOptionsForForm.remoteFilter === 'remote' ? 'selected' : ''}>Remote</option>
+                                <option value="on site" ${queryOptionsForForm.remoteFilter === 'on site' ? 'selected' : ''}>On-site</option>
+                                <option value="hybrid" ${queryOptionsForForm.remoteFilter === 'hybrid' ? 'selected' : ''}>Hybrid</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label for="experienceLevel" class="block text-sm font-medium text-gray-700 mb-1">Experience Level:</label>
+                            <select id="experienceLevel" name="experienceLevel" class="form-input">
+                                <option value="" ${queryOptionsForForm.experienceLevel === '' ? 'selected' : ''}>Any</option>
+                                <option value="internship" ${queryOptionsForForm.experienceLevel === 'internship' ? 'selected' : ''}>Internship</option>
+                                <option value="entry level" ${queryOptionsForForm.experienceLevel === 'entry level' ? 'selected' : ''}>Entry Level</option>
+                                <option value="associate" ${queryOptionsForForm.experienceLevel === 'associate' ? 'selected' : ''}>Associate</option>
+                                <option value="senior" ${queryOptionsForForm.experienceLevel === 'senior' ? 'selected' : ''}>Senior</option>
+                                <option value="director" ${queryOptionsForForm.experienceLevel === 'director' ? 'selected' : ''}>Director</option>
+                                <option value="executive" ${queryOptionsForForm.experienceLevel === 'executive' ? 'selected' : ''}>Executive</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label for="sortBy" class="block text-sm font-medium text-gray-700 mb-1">Sort By:</label>
+                            <select id="sortBy" name="sortBy" class="form-input">
+                                <option value="recent" ${queryOptionsForForm.sortBy === 'recent' ? 'selected' : ''}>Recent</option>
+                                <option value="relevant" ${queryOptionsForForm.sortBy === 'relevant' ? 'selected' : ''}>Relevant</option>
+                            </select>
+                        </div>
                             </div>
                             <div class="flex justify-end gap-3 mt-4">
                                 <button type="submit" class="btn btn-primary">Apply Filters</button>
@@ -323,9 +357,9 @@ app.get('/', (req: Request, res: Response) => {
                             </div>
                         </form>
 
-                        ${errorMessage ? `<div class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-md relative mb-6" role="alert">
+                        ${cachedErrorMessage ? `<div class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-md relative mb-6" role="alert">
                             <strong class="font-bold">Error!</strong>
-                            <span class="block sm:inline">${errorMessage}</span>
+                            <span class="block sm:inline">${cachedErrorMessage}</span>
                         </div>` : ''}
 
                         <div class="overflow-x-auto rounded-lg shadow-md">
@@ -341,7 +375,7 @@ app.get('/', (req: Request, res: Response) => {
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    ${jobs.map((job: Job) => `
+                                    ${cachedJobs.map((job: Job) => `
                                         <tr>
                                             <td>${escapeHtml(job.position || 'N/A')}</td>
                                             <td>${escapeHtml(job.company || 'N/A')}</td>
@@ -360,45 +394,15 @@ app.get('/', (req: Request, res: Response) => {
                         document.getElementById('filterForm').addEventListener('submit', function(event) {
                             event.preventDefault(); // Prevent default form submission
 
-                            // Since URL query parameters are no longer used for fetching,
-                            // we need to dynamically build the URL to reflect the form's current state
-                            // for the "Apply Filters" button to work on the client-side.
-                            // This will essentially refresh the page with the new command line defaults
-                            // being passed to the server via the browser's URL.
-                            // This part of the client-side JavaScript remains as is to allow
-                            // users to change the visible filters in the browser.
-
-                            const keyword = document.getElementById('keyword').value;
-                            const location = document.getElementById('location').value;
-                            const dateSincePosted = document.getElementById('dateSincePosted').value;
-                            const limit = document.getElementById('limit').value;
-                            const jobType = document.getElementById('jobType').value;
-                            const remoteFilter = document.getElementById('remoteFilter').value;
-                            const experienceLevel = document.getElementById('experienceLevel').value;
-                            const sortBy = document.getElementById('sortBy').value;
-
-                            const params = new URLSearchParams();
-                            // Client-side form submission will still build URL parameters
-                            // but the server-side will ignore them for fetching job data.
-                            // This means the URL will update, but the job results will only change
-                            // if you restart the server with new command-line args.
-                            if (keyword) params.append('keyword', keyword);
-                            if (location) params.append('location', location);
-                            if (dateSincePosted) params.append('dateSincePosted', dateSincePosted);
-                            if (limit) params.append('limit', limit);
-                            if (jobType) params.append('jobType', jobType);
-                            if (remoteFilter) params.append('remoteFilter', remoteFilter);
-                            if (experienceLevel) params.append('experienceLevel', experienceLevel);
-                            if (sortBy) params.append('sortBy', sortBy);
-
-                            // Redirect to the new URL with updated query parameters.
-                            // The server will then reload the page, using only
-                            // command-line arguments (and hardcoded defaults) for search.
-                            // This means the form input values in the browser will update
-                            // in the URL, but the actual job search on the server will not change
-                            // unless you restart the Node.js process with different command-line args.
-                            window.location.href = '/' + (params.toString() ? '?' + params.toString() : '');
+                            // Since job data is fetched once at server startup,
+                            // this client-side form now only provides visual filtering
+                            // or serves as an indicator of what parameters were used.
+                            // The actual job search on the server does NOT react to these changes.
+                            // To change job search parameters, you must restart the Node.js server
+                            // with new command-line arguments.
+                            alert('To change job search parameters, please restart the Node.js server with new command-line arguments. The current display is based on the initial server startup parameters.');
                         });
+
 
                         document.getElementById('exportCsvBtn').addEventListener('click', function() {
                             const table = document.getElementById('jobTable');
@@ -439,10 +443,38 @@ app.get('/', (req: Request, res: Response) => {
                 </body>
                 </html>
             `);
-        });
 });
 
 // Start the server
 app.listen(PORT, () => {
     console.log(`Server running on http://localhost:${PORT}`);
+
+    // Fetch jobs once on server startup
+    const queryOptions = getEffectiveQueryOptions();
+    console.log('Performing initial job search...');
+
+    (linkedIn as any).query(queryOptions)
+        .then((response: Job[] | unknown) => {
+            if (Array.isArray(response)) {
+                cachedJobs = response;
+                console.log(`Initial fetch completed. Fetched ${cachedJobs.length} jobs.`);
+            } else {
+                console.warn('Initial fetch: API response was not an array or was empty:', response);
+                cachedErrorMessage = 'No jobs found or unexpected API response format during initial fetch.';
+            }
+        })
+        .catch((error: any) => {
+            console.error('Initial fetch: Error fetching jobs:', error);
+            cachedErrorMessage = `Failed to fetch jobs during initial startup: ${error.message || 'Unknown error'}. Please check your connection or API limits.`;
+            if (error.response && error.response.status === 429) {
+                cachedErrorMessage += " You might have hit a rate limit. Please wait and try again.";
+            }
+        })
+        .finally(() => {
+            isInitialFetchComplete = true; // Mark initial fetch as complete
+            // Open the browser only once after the initial fetch is done
+            open(`http://localhost:${PORT}`)
+                .then(() => console.log(`Opened http://localhost:${PORT} in browser.`))
+                .catch(err => console.error('Failed to open browser:', err));
+        });
 });
