@@ -8,7 +8,7 @@ import open from "open";
 import { Job } from "./src/types";
 import { escapeHtml } from "./src/utils";
 import { getEffectiveQueryOptions } from "./src/args";
-import { filterJobsWithAI } from "./src/services/aiService";
+import { filterJobsWithAI, generateJobDescription } from "./src/services/aiService";
 import { PORT } from "./src/config";
 
 const app = express();
@@ -16,6 +16,7 @@ const app = express();
 // Global variables to cache job data and error message after initial fetch
 let cachedJobs: Job[] = [];
 let aiFilteredJobs: Job[] = [];
+let aiJobSummary: string = "";
 let cachedErrorMessage: string = "";
 let aiErrorMessage: string = "";
 let isInitialFetchComplete: boolean = false;
@@ -58,6 +59,22 @@ app.get("/", (req: Request, res: Response) => {
         <body>
             <div class="container">
                 <h1 class="text-3xl font-bold text-center text-indigo-700 mb-6">LinkedIn Job Search (Modular)</h1>
+
+                ${aiJobSummary ? `
+                <div class="mb-8 p-6 bg-gradient-to-r from-indigo-600 to-violet-600 rounded-2xl shadow-lg border border-indigo-400/20 text-white transform hover:scale-[1.01] transition-transform duration-300">
+                    <div class="flex items-center gap-4">
+                        <div class="bg-white/20 p-3 rounded-xl backdrop-blur-sm">
+                            <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                        </div>
+                        <div>
+                            <p class="text-indigo-100 text-xs font-bold uppercase tracking-wider mb-1">Current Search Goal</p>
+                            <p class="text-lg font-medium leading-relaxed whitespace-pre-line">${escapeHtml(aiJobSummary)}</p>
+                        </div>
+                    </div>
+                </div>
+                ` : ""}
 
                 <form id="filterForm" class="mb-8 p-6 bg-gray-50 rounded-lg shadow-sm">
                     <div class="filter-section mb-4">
@@ -183,16 +200,22 @@ app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
 
   const queryOptions = getEffectiveQueryOptions();
-  console.log("Performing initial job search...");
+  console.log("🚀 Starting parallel job search and AI goal generation...");
 
-  (linkedIn as any)
-    .query(queryOptions)
-    .then(async (response: Job[] | unknown) => {
+  Promise.all([
+    (linkedIn as any).query(queryOptions),
+    generateJobDescription(queryOptions)
+  ])
+    .then(async ([response, goal]) => {
+      aiJobSummary = goal as string;
+      console.log("\n✨ AI Search Goal Generated:");
+      console.log(`\x1b[36m%s\x1b[0m`, `"${aiJobSummary}"\n`);
+
       if (Array.isArray(response)) {
         cachedJobs = response;
         console.log(`Initial fetch completed. Fetched ${cachedJobs.length} jobs.`);
         
-        const aiResult = await filterJobsWithAI(cachedJobs, queryOptions);
+        const aiResult = await filterJobsWithAI(cachedJobs, aiJobSummary);
         aiFilteredJobs = aiResult.filteredJobs;
         aiErrorMessage = aiResult.errorMessage;
         
