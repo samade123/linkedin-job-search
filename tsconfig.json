@@ -15,7 +15,8 @@
   },
   "include": [
     "server.ts",
-    "types/**/*.d.ts" // Include all .d.ts files in the types folder
+    "src/**/*.ts",
+    "types/**/*.d.ts"
   ],
   "exclude": [
     "node_modules"
