@@ -8,14 +8,48 @@ const AI_MODEL = "NexaAI/OmniNeural-4B";
 const AI_ENDPOINT = "http://127.0.0.1:18181/v1/chat/completions";
 
 /**
- * Utility to strip markdown and clean string for JSON parsing.
+ * Utility to strip markdown and extract JSON from AI responses reliably.
  */
 function cleanJsonString(content: string): string {
-  let cleaned = content.trim();
-  if (cleaned.startsWith("```json")) cleaned = cleaned.replace(/^```json/, "");
-  if (cleaned.startsWith("```")) cleaned = cleaned.replace(/^```/, "");
-  if (cleaned.endsWith("```")) cleaned = cleaned.replace(/```$/, "");
-  return cleaned.trim();
+  let text = content.trim();
+  
+  // 1. Try to extract from triple-backtick markdown blocks
+  const markdownMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+  if (markdownMatch) {
+    text = markdownMatch[1].trim();
+  }
+
+  // 2. Find the start and end of the actual JSON structure
+  const firstBracket = text.indexOf("[");
+  const firstBrace = text.indexOf("{");
+  
+  let start = -1;
+  if (firstBracket !== -1 && (firstBrace === -1 || firstBracket < firstBrace)) {
+    start = firstBracket;
+  } else if (firstBrace !== -1) {
+    start = firstBrace;
+  }
+  
+  if (start !== -1) {
+    const lastBracket = text.lastIndexOf("]");
+    const lastBrace = text.lastIndexOf("}");
+    const end = Math.max(lastBracket, lastBrace);
+    
+    if (end > start) {
+      let cleaned = text.substring(start, end + 1).trim();
+      
+      // Heuristic fix for "index": 123 pattern often produced by some models
+      if (cleaned.startsWith("[") && cleaned.includes("\"index\":")) {
+        cleaned = cleaned.replace(/"index":\s*(\d+)/g, "$1");
+        // Also remove potential extra braces if the model did [{"index": 1}] when we wanted [1]
+        cleaned = cleaned.replace(/\{\s*(\d+)\s*\}/g, "$1");
+      }
+      
+      return cleaned;
+    }
+  }
+  
+  return text;
 }
 
 /**
@@ -36,6 +70,7 @@ async function callAiWithJsonRetry<T>(
     const content = response.data.choices[0].message.content.trim();
     console.log(`🤖 AI Response [${schemaDescription}]: ${content}`);
     const cleaned = cleanJsonString(content);
+    console.log(`🧹 Cleaned Response [${schemaDescription}]: ${cleaned}`);
 
     try {
       return JSON.parse(cleaned) as T;
@@ -158,7 +193,9 @@ export async function filterJobsWithAI(jobs: Job[], searchGoal: SearchGoal): Pro
 Intent: "${searchGoal.summary}"
 Target Roles: ${searchGoal.titles.join(", ")}
 
-Evaluate jobs based on their functional alignment with these professional roles and skills. Prioritize jobs that fit the professional context even if the exact keyword is implicitly used. Output ONLY a valid JSON array of indices.`,
+Evaluate jobs based on their functional alignment. Output ONLY a valid JSON array of the integers representing the indices. 
+Format: [index1, index2, ...]
+Example: [1, 5, 8]`,
           },
           {
             role: "user",
@@ -206,7 +243,9 @@ Evaluate jobs based on their functional alignment with these professional roles 
 Intent: "${searchGoal.summary}"
 Target Roles: ${searchGoal.titles.join(", ")}
 
-Focus on the professional relevance and seniority. Ensure the roles are a logical fit for someone with the skills described. Output ONLY a valid JSON array of the local integer indexes.`,
+Focus on professional relevance. Output ONLY a valid JSON array of the integer indices.
+Format: [index1, index2, ...]
+Example: [0, 2, 9]`,
             },
             {
               role: "user",
@@ -252,7 +291,9 @@ Focus on the professional relevance and seniority. Ensure the roles are a logica
 Intent: "${searchGoal.summary}"
 Target Roles: ${searchGoal.titles.join(", ")}
 
-Be extremely strict. Prioritize jobs that fit the professional context of the skills provided. If a job only mentions the skill but isn't for a relevant role, discard it. Output ONLY a valid JSON array of indices.`,
+Be extremely strict. Output ONLY a valid JSON array of the integer indices.
+Format: [index1, index2, ...]
+Example: [1, 3]`,
             },
             {
               role: "user",
