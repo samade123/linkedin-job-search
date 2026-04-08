@@ -1,177 +1,91 @@
-LinkedIn Job Search Application (TypeScript)
-============================================
+# 🚀 AI-Powered LinkedIn Job Hunter
 
-TLDR
------
+A high-fidelity, intelligent LinkedIn job search engine built with Node.js, TypeScript, and local AI integration. Transform a simple keyword search into a professionally vetted shortlist of opportunities.
 
-This Node.js TypeScript app searches LinkedIn for jobs. It's configured via command-line arguments (or defaults if none are provided). Results are displayed in a web table and can be exported to CSV.
+---
 
-To run:
+## ✨ Features
 
-1. `npm install`
+- **🤖 AI Search Strategist**: Automatically analyzes your filters to create a professional search intent.
+- **🔍 Semantic Expansion**: Automatically identifies at least 8 "Loosely Related" job titles (synonyms and adjacent roles) to broaden your search net without missing hidden gems.
+- **🛡️ 3-Stage Intelligence Pipeline**:
+  - **Stage 1 (Batch Selection)**: High-speed parallel evaluation of all fetched jobs.
+  - **Stage 2 (Final Narrowing)**: Semantic refinement to the top 10 most relevant candidates.
+  - **Stage 3 (Strict Vetting)**: A non-destructive "Gold Standard" audit that tags jobs with an amber **Vetted** badge.
+- **⚡ Strict Mode Toggle**: Integrated directly into the results table header to instantly switch between "All Potential Matches" and "Strictly Vetted" roles.
+- **🎨 Glassmorphic UI**: A premium, responsive SPA built with modern CSS and Tailwind-inspired aesthetics.
 
-2. `npm run build`
+---
 
-3. `node dist/server.js -- --keyword="React" --location="London"` (or just `npm start` for defaults)
+## 🛠️ Prerequisites
 
-4. Open `http://localhost:3000` in your browser.
+- **Node.js**: v18.0.0 or higher.
+- **Nexa AI Local Server**: The application expects an AI inference server running locally (compatible with Llama/OmniNeural models).
+  - Default Endpoint: `http://127.0.0.1:18181/v1`
+  - Recommended Model: `NexaAI/OmniNeural-4B`
 
-✨ Features
-----------
+---
 
-- Configurable Job Search: Easily search LinkedIn job listings by keywords, location, date posted, job type, remote options, salary, and experience level.
+## 🚀 Getting Started
 
-- Smart Defaults: By default, it searches for "Vue.js" and "Angular" jobs posted in the "last 7 days" with a limit of "100" results (global location by default).
+Follow these steps to get your local job engine running:
 
-- Interactive Table: View your search results in a dynamic HTML table that's easy to read and navigate.
-
-- Filter Options: Refine your search directly on the page using a user-friendly filtering interface.
-
-- CSV Export: Quickly export the displayed job data to a CSV file for offline analysis or record-keeping.
-
-- Modern UI: Built with Tailwind CSS for a clean, responsive, and modern user experience.
-
-🛠️ Prerequisites
------------------
-
-Before you get started, make sure you have the following installed on your system:
-
-- Node.js: Version 14 or higher (LTS is recommended). You can download it from [nodejs.org](https://nodejs.org/ "null").
-
-- npm: Node Package Manager, which comes bundled with Node.js.
-
-🚀 Installation & Usage
------------------------
-
-Follow these simple steps to set up and run the application on your local machine:
-
-### 1\. Create Your Project
-
-First, create a new folder for your project (e.g., `linkedin-job-app-ts`) and place the provided `package.json`, `tsconfig.json`, `types/linkedin-jobs-api.d.ts`, and `server.ts` files inside it. Ensure the `types` folder is correctly placed in your project root.
-
-### 2\. Install Dependencies
-
-Open your terminal or command prompt, navigate to your new project directory, and install all the necessary packages:
-
-```
+### 1. Install Dependencies
+```bash
 npm install
-
 ```
 
-### 3\. Compile TypeScript
-
-Before the application can run, you need to compile the TypeScript code into JavaScript. Execute this command:
-
-```
+### 2. Build the Project
+Compile the TypeScript source into the production-ready `dist` folder:
+```bash
 npm run build
-
 ```
 
-This will create a `dist` folder containing the compiled `server.js` file.
-
-### 4\. Start the Application
-
-You have a few options for starting the server:
-
-- Using npm script (Recommended for ease of use):
-
-    ```
-    npm start
-
-    ```
-
-    To pass command-line arguments:
-
-    ```
-    node dist/server.js -- --keyword="React" --location="London" 
-
-    ```
-
-- Development Mode (with auto-restart on code changes via Nodemon):
-
-    ```
-    npm run dev
-
-    ```
-
-    To pass command-line arguments in development mode:
-
-    ```
-    npm run dev -- --keyword="Python" --dateSincePosted="past Month" --remoteFilter="remote"
-
-    ```
-
-    *(If you don't have `nodemon` installed globally, you might need to install it first: `npm install -g nodemon`)*
-
-- Direct Node.js execution (after compilation):
-
-    You can directly run the compiled JavaScript file.
-
-    ```
-    node dist/server.js
-
-    ```
-
-    To pass command-line arguments:
-
-    ```
-    node dist/server.js --keyword="GoLang" --sortBy="recent"
-
-    ```
-
-    (Note: When running directly with `node`, you don't need the extra `--` before the arguments.)
-
-### 5\. Access in Your Browser
-
-Once the server is running, open your web browser and go to:
-
-```
-http://localhost:3000
-
+### 3. Start the Application
+Launch the Express server and API:
+```bash
+npm start
 ```
 
-🔍 How to Use Filters
----------------------
+### 4. Open the UI
+Navigate to [http://localhost:3000](http://localhost:3000) in your modern web browser.
 
-At the top of the page, you'll find a form to refine your job search. Please note: These filters are for displaying the currently loaded data in the browser. The actual job search parameters on the server are determined *only* by the hardcoded defaults and any command-line arguments you provide when starting the server. To change the jobs being searched for, you need to restart the Node.js application with different command-line arguments.
+---
 
-- Keywords: Enter job titles or specific skills (e.g., `React, Node.js, Developer`).
+## 📦 Project Structure
 
-- Location: Specify a city, region, or use `remote` for remote-only jobs (e.g., `London, England`, `New York`, `remote`).
+```text
+├── public/
+│   └── index.html      # High-fidelity SPA Frontend
+├── src/
+│   ├── services/
+│   │   └── aiService.ts # Multi-stage AI intelligence layer
+│   └── types/
+│       └── index.ts     # Core data contracts
+├── server.ts            # Express JSON API & Static Server
+└── tsconfig.json        # TypeScript configuration
+```
 
-- Date Posted: Select a timeframe like `Past Week`, `Past 24 Hours`, `Past Month`, or `Anytime`.
+---
 
-- Limit: Control the maximum number of results to fetch (default is 100).
+## ⌨️ Available Commands
 
-- Job Type, Remote, Experience Level, Sort By: Use the dropdown menus for more granular control over your search.
+- `npm run build`: Compiles TypeScript files using `tsc`.
+- `npm start`: Runs the compiled server from `dist/server.js`.
+- `npm run dev`: (Optional) Runs the project in development mode using `nodemon`.
 
-After making your selections, click the "Apply Filters" button. This will refresh the page and update the URL, but the job data fetched from LinkedIn will remain based on the server's startup parameters.
+---
 
-📄 Exporting Data to CSV
-------------------------
+## ⚠️ Important Notes
 
-To get the job data from the table into a CSV file:
+- **AI Inference**: Ensure your local AI server is active before searching, as the application relies on it for goal generation and filtering.
+- **Rate Limits**: This application uses the `linkedin-jobs-api`. Please respect LinkedIn's rate limits (typically ~100 requests per hour).
+- **Self-Healing**: The system includes a built-in JSON self-correction mechanism to handle any erratic AI outputs.
 
-1. Apply any filters you want on the client-side to refine the *displayed* data.
+---
 
-2. Click the "Export to CSV" button.
+## 🤝 Contributing
 
-A file named `linkedin_jobs.csv` will automatically download to your computer, containing all the visible table data.
+Contributions are welcome! Feel free to open an issue or submit a pull request if you have ideas for new filtering stages or UI enhancements.
 
-⚠️ Important Notes
-------------------
-
-- This application uses the [linkedin-jobs-api](https://github.com/drakehrm/linkedin-jobs-api "null") by [drakehrm](https://github.com/drakehrm "null"). Credit to the creator for this helpful API!
-
-- This is an unofficial API. Please be mindful of and adhere to LinkedIn's terms of service and any applicable API usage policies.
-
-- The API has rate limiting (typically 100 requests per hour per IP address). If you exceed this, you might receive an error message and need to wait before making more requests.
-
-- Job details, especially salary information, might not always be available or consistent, as this depends on the data provided by the API itself.
-
-- Server-Side Parameters Only: The job search executed by the Node.js server is configured exclusively via hardcoded defaults and command-line arguments provided at startup. Client-side form submissions will update the URL, but they will not trigger a new job search on the server with those URL parameters. To change the search criteria for the job data itself, you must restart the Node.js application with updated command-line arguments.
-
-🤝 Contributing
----------------
-
-Contributions are welcome! If you have suggestions or want to improve the application, feel free to open issues or submit pull requests.
+*Created with ❤️ by Antigravity*
