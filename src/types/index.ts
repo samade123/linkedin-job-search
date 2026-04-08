@@ -9,6 +9,7 @@ export interface Job {
   agoTime: string;
   salary?: string;
   jobUrl: string;
+  isVetted?: boolean;
 }
 
 export interface QueryOptions {
@@ -21,4 +22,9 @@ export interface QueryOptions {
   salary: "40000" | "60000" | "80000" | "100000" | "120000" | "";
   experienceLevel: "internship" | "entry level" | "associate" | "senior" | "director" | "executive" | "";
   sortBy: "recent" | "relevant";
+}
+
+export interface SearchGoal {
+  summary: string;
+  titles: string[];
 }
