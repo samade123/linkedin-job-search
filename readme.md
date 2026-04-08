@@ -87,5 +87,3 @@ Navigate to [http://localhost:3000](http://localhost:3000) in your modern web br
 ## 🤝 Contributing
 
 Contributions are welcome! Feel free to open an issue or submit a pull request if you have ideas for new filtering stages or UI enhancements.
-
-*Created with ❤️ by Antigravity*
