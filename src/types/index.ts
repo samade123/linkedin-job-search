@@ -27,4 +27,5 @@ export interface QueryOptions {
 export interface SearchGoal {
   summary: string;
   titles: string[];
+  relatedTitles: string[];
 }

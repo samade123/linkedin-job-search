@@ -109,6 +109,7 @@ export async function generateJobDescription(queryOptions: QueryOptions): Promis
   const fallbackGoal: SearchGoal = {
     summary: `Searching for ${queryOptions.keyword}${queryOptions.location ? ` in ${queryOptions.location}` : ""}${queryOptions.jobType ? ` (${queryOptions.jobType})` : ""}${queryOptions.remoteFilter ? ` (${queryOptions.remoteFilter})` : ""}.`,
     titles: [queryOptions.keyword],
+    relatedTitles: [],
   };
 
   try {
@@ -122,13 +123,15 @@ export async function generateJobDescription(queryOptions: QueryOptions): Promis
 Strict JSON format requirements:
 {
   "summary": "A descriptive paragraph (2-3 sentences) summarizing the intent. If the 'Keywords' is a specific tool or skill (e.g., 'React', 'Docker'), identify the professional roles that primarily use it (e.g., 'Frontend Engineer', 'DevOps Engineer') and frame the summary around those roles.",
-  "titles": ["List of 3-4 specific, high-relevance professional job titles that utilize the provided keywords/skills."]
+  "titles": ["List of 3-4 specific, high-relevance professional job titles that utilize the provided keywords/skills."],
+  "relatedTitles": ["List of at least 8 job titles that are synonyms, adjacent roles, or related positions that utilize the same skills. These allow for a broader search scope (e.g., if 'Web Developer' is searched, include 'Web Engineer', 'Full Stack Developer', etc.)."]
 }
 
 Rules:
 1. **Implicit Openness**: Mention 'open to all' for any missing/Any filters.
 2. **Professional Role Inference**: If a technical skill is provided, prioritize related professional role names in the 'summary' and 'titles'.
-3. **Format**: Output ONLY the raw JSON object.`,
+3. **Broad Adjacency**: The 'relatedTitles' must contain at least 8 items that expand the search's reach to similar or related roles.
+4. **Format**: Output ONLY the raw JSON object.`,
         },
         {
           role: "user",
@@ -146,7 +149,7 @@ Rules:
     };
 
     const parsed = await callAiWithJsonRetry<SearchGoal>(payload, "SearchGoal JSON object");
-    if (parsed && parsed.summary && Array.isArray(parsed.titles)) {
+    if (parsed && parsed.summary && Array.isArray(parsed.titles) && Array.isArray(parsed.relatedTitles)) {
       return parsed;
     }
   } catch (error) {
@@ -165,61 +168,23 @@ export async function filterJobsWithAI(jobs: Job[], searchGoal: SearchGoal): Pro
   console.log("Starting optimized AI filtering...");
 
   try {
-    const selectedIndices = new Set<number>();
+    // Stage 1: Regex Broad Match
+    console.log("Starting Stage 1: Regex Broad Match...");
+    const allTerms = [...searchGoal.titles, ...searchGoal.relatedTitles]
+      .flatMap(t => t.split(/\s+/))
+      .filter(t => t.length > 2)
+      .map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
 
-    // Stage 1: Batch selection
-    for (let i = 0; i < jobs.length; i += BATCH_SIZE) {
-      const batch = jobs.slice(i, i + BATCH_SIZE);
-      const batchStartIndex = i;
-
-      console.log(`Processing AI batch ${i / BATCH_SIZE + 1} (${batch.length} jobs)...`);
-
-      const promptContent = `Jobs to evaluate:\n${JSON.stringify(
-        batch.map((j, idx) => ({
-          index: batchStartIndex + idx,
-          title: cleanJobText(j.position),
-          company: cleanJobText(j.company),
-          location: cleanJobText(j.location),
-        })),
-      )}`;
-
-      const payload = {
-        model: AI_MODEL,
-        messages: [
-          {
-            role: "system",
-            content: `You are a job filter assistant. Select the top 2-3 most highly relevant tech jobs from the provided list based on this search goal:
-
-Intent: "${searchGoal.summary}"
-Target Roles: ${searchGoal.titles.join(", ")}
-
-Evaluate jobs based on their functional alignment. Output ONLY a valid JSON array of the integers representing the indices. 
-Format: [index1, index2, ...]
-Example: [1, 5, 8]`,
-          },
-          {
-            role: "user",
-            content: promptContent,
-          },
-        ],
-        temperature: 0.0,
-        max_tokens: 500,
-      };
-
-      const parsedIndices = await callAiWithJsonRetry<number[]>(payload, "JSON array of indices");
-      if (Array.isArray(parsedIndices)) {
-        parsedIndices.forEach((idx) => {
-          const numIdx = Number(idx);
-          if (!isNaN(numIdx) && numIdx >= batchStartIndex && numIdx < batchStartIndex + batch.length) {
-            selectedIndices.add(numIdx);
-          }
-        });
-      }
-    }
-
-    if (selectedIndices.size > 0) {
-      let intermediateJobs = Array.from(selectedIndices).map((idx) => jobs[idx]);
-      console.log(`Stage 1 complete. Aggregated ${intermediateJobs.length} potential picks.`);
+    if (allTerms.length === 0) {
+      console.warn("No search terms found for regex filtering. Defaulting to first 50 jobs.");
+      aiFilteredJobs = jobs.slice(0, 50).map(j => ({ ...j, isVetted: false }));
+    } else {
+      const pattern = new RegExp(allTerms.join('|'), 'i');
+      const intermediateJobs = jobs.filter(job => 
+        pattern.test(job.position) || pattern.test(job.company)
+      );
+      
+      console.log(`Stage 1 complete. Regex matched ${intermediateJobs.length} potential picks.`);
 
       // Stage 2: Final narrowing to top 10
       if (intermediateJobs.length > 10) {
@@ -238,12 +203,13 @@ Example: [1, 5, 8]`,
           messages: [
             {
               role: "system",
-              content: `You are a final stage job selector. From the provided list of potential matches, select the absolute top 10 best matches that satisfy this search goal:
+              content: `You are a final stage job selector. From the provided list of potential matches, select the absolute top 10 best matches that satisfy this search goal. 
 
 Intent: "${searchGoal.summary}"
 Target Roles: ${searchGoal.titles.join(", ")}
+Related Roles: ${searchGoal.relatedTitles.join(", ")}
 
-Focus on professional relevance. Output ONLY a valid JSON array of the integer indices.
+Focus on professional relevance. Consider both target and related roles to ensure variety and coverage. Output ONLY a valid JSON array of the integer indices.
 Format: [index1, index2, ...]
 Example: [0, 2, 9]`,
             },
