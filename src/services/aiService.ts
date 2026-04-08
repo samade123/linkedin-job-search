@@ -3,16 +3,15 @@ import { Job, QueryOptions, SearchGoal } from "../types";
 import { cleanJobText } from "../utils";
 
 const BATCH_SIZE = 20;
-// const AI_MODEL = "NexaAI/Llama3.2-3B-NPU-Turbo";
-const AI_MODEL = "NexaAI/OmniNeural-4B";
-const AI_ENDPOINT = "http://127.0.0.1:18181/v1/chat/completions";
+export const DEFAULT_AI_MODEL = "NexaAI/OmniNeural-4B";
+export const DEFAULT_BASE_URL = "http://127.0.0.1:18181/v1";
 
 /**
  * Utility to strip markdown and extract JSON from AI responses reliably.
  */
 function cleanJsonString(content: string): string {
   let text = content.trim();
-  
+
   // 1. Try to extract from triple-backtick markdown blocks
   const markdownMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
   if (markdownMatch) {
@@ -22,33 +21,33 @@ function cleanJsonString(content: string): string {
   // 2. Find the start and end of the actual JSON structure
   const firstBracket = text.indexOf("[");
   const firstBrace = text.indexOf("{");
-  
+
   let start = -1;
   if (firstBracket !== -1 && (firstBrace === -1 || firstBracket < firstBrace)) {
     start = firstBracket;
   } else if (firstBrace !== -1) {
     start = firstBrace;
   }
-  
+
   if (start !== -1) {
     const lastBracket = text.lastIndexOf("]");
     const lastBrace = text.lastIndexOf("}");
     const end = Math.max(lastBracket, lastBrace);
-    
+
     if (end > start) {
       let cleaned = text.substring(start, end + 1).trim();
-      
+
       // Heuristic fix for "index": 123 pattern often produced by some models
-      if (cleaned.startsWith("[") && cleaned.includes("\"index\":")) {
+      if (cleaned.startsWith("[") && cleaned.includes('"index":')) {
         cleaned = cleaned.replace(/"index":\s*(\d+)/g, "$1");
         // Also remove potential extra braces if the model did [{"index": 1}] when we wanted [1]
         cleaned = cleaned.replace(/\{\s*(\d+)\s*\}/g, "$1");
       }
-      
+
       return cleaned;
     }
   }
-  
+
   return text;
 }
 
@@ -56,17 +55,22 @@ function cleanJsonString(content: string): string {
  * Executes an AI request and attempts to fix the JSON if parsing fails.
  */
 async function callAiWithJsonRetry<T>(
+  model: string,
+  baseUrl: string,
   initialPayload: any,
   schemaDescription: string,
-  isRetry: boolean = false
+  isRetry: boolean = false,
 ): Promise<T | null> {
   try {
-    const response = await axios.post(AI_ENDPOINT, initialPayload, {
+    const endpoint = `${baseUrl.replace(/\/$/, "")}/chat/completions`;
+    const payloadWithModel = { ...initialPayload, model };
+    const response = await axios.post(endpoint, payloadWithModel, {
       headers: { "Content-Type": "application/json" },
+      timeout: 15000, // 15s safety timeout for filtering/goal
     });
 
     if (response.status !== 200) return null;
-    
+
     const content = response.data.choices[0].message.content.trim();
     console.log(`🤖 AI Response [${schemaDescription}]: ${content}`);
     const cleaned = cleanJsonString(content);
@@ -81,20 +85,21 @@ async function callAiWithJsonRetry<T>(
       }
 
       console.warn(`⚠️ AI provided malformed JSON. Attempting self-correction for ${schemaDescription}...`);
-      
+
       const retryPayload = {
         ...initialPayload,
+        model, // Ensure model is passed
         messages: [
           ...initialPayload.messages,
           { role: "assistant", content: content },
-          { 
-            role: "user", 
-            content: `Your previous response was not valid JSON. Please fix it and return ONLY the valid ${schemaDescription}. Ensure all items are properly quoted and comma-separated.` 
-          }
-        ]
+          {
+            role: "user",
+            content: `Your previous response was not valid JSON. Please fix it and return ONLY the valid ${schemaDescription}. Ensure all items are properly quoted and comma-separated.`,
+          },
+        ],
       };
-      
-      return callAiWithJsonRetry<T>(retryPayload, schemaDescription, true);
+
+      return callAiWithJsonRetry<T>(model, baseUrl, retryPayload, schemaDescription, true);
     }
   } catch (err: any) {
     console.error(`❌ AI Request Error: ${err.message}`);
@@ -105,7 +110,11 @@ async function callAiWithJsonRetry<T>(
 /**
  * Generates a structured JSON summary of what the user is looking for based on their filters.
  */
-export async function generateJobDescription(queryOptions: QueryOptions): Promise<SearchGoal> {
+export async function generateJobDescription(
+  queryOptions: QueryOptions,
+  model: string = DEFAULT_AI_MODEL,
+  baseUrl: string = DEFAULT_BASE_URL,
+): Promise<SearchGoal> {
   const fallbackGoal: SearchGoal = {
     summary: `Searching for ${queryOptions.keyword}${queryOptions.location ? ` in ${queryOptions.location}` : ""}${queryOptions.jobType ? ` (${queryOptions.jobType})` : ""}${queryOptions.remoteFilter ? ` (${queryOptions.remoteFilter})` : ""}.`,
     titles: [queryOptions.keyword],
@@ -114,23 +123,22 @@ export async function generateJobDescription(queryOptions: QueryOptions): Promis
 
   try {
     const payload = {
-      model: AI_MODEL,
       messages: [
         {
           role: "system",
-          content: `You are an intelligent job search strategist. Summarize the user's intent based on their filters into a structured JSON response.
-
+          content: `You are a universal professional job search strategist. Summarize the user's intent into a structured JSON response that serves any industry (Corporate, Healthcare, Education, Creative, etc.).
+ 
 Strict JSON format requirements:
 {
-  "summary": "A descriptive paragraph (2-3 sentences) summarizing the intent. If the 'Keywords' is a specific tool or skill (e.g., 'React', 'Docker'), identify the professional roles that primarily use it (e.g., 'Frontend Engineer', 'DevOps Engineer') and frame the summary around those roles.",
-  "titles": ["List of 3-4 specific, high-relevance professional job titles that utilize the provided keywords/skills."],
-  "relatedTitles": ["List of at least 8 job titles that are synonyms, adjacent roles, or related positions that utilize the same skills. These allow for a broader search scope (e.g., if 'Web Developer' is searched, include 'Web Engineer', 'Full Stack Developer', etc.)."]
+  "summary": "A descriptive paragraph (2-3 sentences) summarizing the intent. If the 'Keywords' is a specific tool, skill, or credential (e.g., 'Salesforce', 'SEO', 'Nursing License'), identify the professional roles that primarily use it (e.g., 'Account Executive', 'Marketing Specialist', 'Nurse') and frame the summary around those roles.",
+  "titles": ["List of 3-4 specific job titles that utilize the provided keywords/skills across any relevant industry."],
+  "relatedTitles": ["List of at least 8 job titles that are synonyms, adjacent roles, or related positions. Broaden the scope to include any professional environment where these skills are valuable (e.g., if 'Customer Success' is searched, include 'Account Manager', 'Client Relations Specialist', 'Customer Experience Coordinator', etc.)."]
 }
-
+ 
 Rules:
 1. **Implicit Openness**: Mention 'open to all' for any missing/Any filters.
-2. **Professional Role Inference**: If a technical skill is provided, prioritize related professional role names in the 'summary' and 'titles'.
-3. **Broad Adjacency**: The 'relatedTitles' must contain at least 8 items that expand the search's reach to similar or related roles.
+2. **Professional Role inference**: If a specific tool or skill is provided, prioritize the corresponding professional role names in the 'summary' and 'titles'.
+3. **Inclusive Adjacency**: The 'relatedTitles' must contain at least 8 items that expand the search's reach into related professional domains.
 4. **Format**: Output ONLY the raw JSON object.`,
         },
         {
@@ -148,7 +156,7 @@ Rules:
       max_tokens: 500,
     };
 
-    const parsed = await callAiWithJsonRetry<SearchGoal>(payload, "SearchGoal JSON object");
+    const parsed = await callAiWithJsonRetry<SearchGoal>(model, baseUrl, payload, "SearchGoal JSON object");
     if (parsed && parsed.summary && Array.isArray(parsed.titles) && Array.isArray(parsed.relatedTitles)) {
       return parsed;
     }
@@ -161,7 +169,12 @@ Rules:
 /**
  * Filters jobs using AI in a multi-stage process (Batch selection, Final narrowing, Strict vetting).
  */
-export async function filterJobsWithAI(jobs: Job[], searchGoal: SearchGoal): Promise<{ filteredJobs: Job[]; errorMessage: string }> {
+export async function filterJobsWithAI(
+  jobs: Job[],
+  searchGoal: SearchGoal,
+  model: string = DEFAULT_AI_MODEL,
+  baseUrl: string = DEFAULT_BASE_URL,
+): Promise<{ filteredJobs: Job[]; errorMessage: string }> {
   let aiFilteredJobs: Job[] = [];
   let aiErrorMessage = "";
 
@@ -171,19 +184,17 @@ export async function filterJobsWithAI(jobs: Job[], searchGoal: SearchGoal): Pro
     // Stage 1: Regex Broad Match
     console.log("Starting Stage 1: Regex Broad Match...");
     const allTerms = [...searchGoal.titles, ...searchGoal.relatedTitles]
-      .flatMap(t => t.split(/\s+/))
-      .filter(t => t.length > 2)
-      .map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+      .flatMap((t) => t.split(/\s+/))
+      .filter((t) => t.length > 2)
+      .map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
 
     if (allTerms.length === 0) {
       console.warn("No search terms found for regex filtering. Defaulting to first 50 jobs.");
-      aiFilteredJobs = jobs.slice(0, 50).map(j => ({ ...j, isVetted: false }));
+      aiFilteredJobs = jobs.slice(0, 50).map((j) => ({ ...j, isVetted: false }));
     } else {
-      const pattern = new RegExp(allTerms.join('|'), 'i');
-      const intermediateJobs = jobs.filter(job => 
-        pattern.test(job.position) || pattern.test(job.company)
-      );
-      
+      const pattern = new RegExp(allTerms.join("|"), "i");
+      const intermediateJobs = jobs.filter((job) => pattern.test(job.position) || pattern.test(job.company));
+
       console.log(`Stage 1 complete. Regex matched ${intermediateJobs.length} potential picks.`);
 
       // Stage 2: Final narrowing to top 10
@@ -199,17 +210,16 @@ export async function filterJobsWithAI(jobs: Job[], searchGoal: SearchGoal): Pro
         )}`;
 
         const finalPayload = {
-          model: AI_MODEL,
           messages: [
             {
               role: "system",
-              content: `You are a final stage job selector. From the provided list of potential matches, select the absolute top 10 best matches that satisfy this search goal. 
-
+              content: `You are a professional job selector. From the provided list of potential matches, select the absolute top 10 best matches that satisfy this search goal across any professional field. 
+ 
 Intent: "${searchGoal.summary}"
 Target Roles: ${searchGoal.titles.join(", ")}
 Related Roles: ${searchGoal.relatedTitles.join(", ")}
-
-Focus on professional relevance. Consider both target and related roles to ensure variety and coverage. Output ONLY a valid JSON array of the integer indices.
+ 
+Focus on universal professional relevance. Select roles that directly match the user's career field and level. Output ONLY a valid JSON array of the integer indices.
 Format: [index1, index2, ...]
 Example: [0, 2, 9]`,
             },
@@ -222,16 +232,16 @@ Example: [0, 2, 9]`,
           max_tokens: 1550,
         };
 
-        const finalIndices = await callAiWithJsonRetry<number[]>(finalPayload, "JSON array of 10 indices");
+        const finalIndices = await callAiWithJsonRetry<number[]>(model, baseUrl, finalPayload, "JSON array of 10 indices");
         if (Array.isArray(finalIndices) && finalIndices.length > 0) {
           aiFilteredJobs = finalIndices
             .filter((idx) => typeof idx === "number" && idx >= 0 && idx < intermediateJobs.length)
             .map((idx) => ({ ...intermediateJobs[idx], isVetted: false }));
         } else {
-          aiFilteredJobs = intermediateJobs.slice(0, 10).map(j => ({ ...j, isVetted: false }));
+          aiFilteredJobs = intermediateJobs.slice(0, 10).map((j) => ({ ...j, isVetted: false }));
         }
       } else {
-        aiFilteredJobs = intermediateJobs.map(j => ({ ...j, isVetted: false }));
+        aiFilteredJobs = intermediateJobs.map((j) => ({ ...j, isVetted: false }));
         console.log(`Total picks (${aiFilteredJobs.length}) is already <= 10. Skipping Stage 2.`);
       }
 
@@ -248,16 +258,15 @@ Example: [0, 2, 9]`,
         )}`;
 
         const vettingPayload = {
-          model: AI_MODEL,
           messages: [
             {
               role: "system",
-              content: `You are a strict job auditor. Triple-check these jobs and output ONLY a JSON array of those that are GUARANTEED matches for this search goal:
-
+              content: `You are a professional job auditor. Triple-check these jobs and output ONLY a JSON array of those that are GUARANTEED matches for this search goal, regardless of industry:
+ 
 Intent: "${searchGoal.summary}"
 Target Roles: ${searchGoal.titles.join(", ")}
-
-Be extremely strict. Output ONLY a valid JSON array of the integer indices.
+ 
+Be extremely strict. Ensure the role, seniority, and core function match the user's intent. Output ONLY a valid JSON array of the integer indices.
 Format: [index1, index2, ...]
 Example: [1, 3]`,
             },
@@ -270,22 +279,74 @@ Example: [1, 3]`,
           max_tokens: 1500,
         };
 
-        const vettedIndices = await callAiWithJsonRetry<number[]>(vettingPayload, "JSON array of vetted indices");
+        const vettedIndices = await callAiWithJsonRetry<number[]>(model, baseUrl, vettingPayload, "JSON array of vetted indices");
         if (Array.isArray(vettedIndices)) {
-          const vettedSet = new Set(vettedIndices.map(idx => Number(idx)));
+          const vettedSet = new Set(vettedIndices.map((idx) => Number(idx)));
           aiFilteredJobs.forEach((job, idx) => {
-            if (vettedSet.has(idx)) {
-              job.isVetted = true;
-            }
+            job.isVetted = vettedSet.has(idx);
           });
-          console.log(`Stage 3 complete. Tagged ${vettedIndices.length} strictly vetted jobs.`);
         }
       }
     }
-  } catch (e: any) {
-    aiErrorMessage = `AI filtering error: ${e.message}`;
-    console.error("AI Filtering error:", e);
+  } catch (err: any) {
+    aiErrorMessage = `AI Filtering Error: ${err.message}`;
+    console.error(`❌ ${aiErrorMessage}`);
   }
 
   return { filteredJobs: aiFilteredJobs, errorMessage: aiErrorMessage };
+}
+
+/**
+ * Rapidly optimizes a search keyword by expanding it into semantically related professional terms.
+ * This is used BEFORE the LinkedIn search to fetch a more relevant initial dataset.
+ */
+export async function optimizeSearchKeywords(
+  keyword: string,
+  model: string = DEFAULT_AI_MODEL,
+  baseUrl: string = DEFAULT_BASE_URL,
+): Promise<string> {
+  const payload = {
+    messages: [
+      {
+        role: "system",
+        content: "Fix typos in the user's keyword and expand to 3-4 professional search terms across any relevant industry. Space-separated only. No extra text.",
+      },
+      {
+        role: "user",
+        content: `Keyword: ${keyword}`,
+      },
+    ],
+    temperature: 0.1,
+    max_tokens: 64,
+  };
+
+  const endpoint = `${baseUrl.replace(/\/$/, "")}/chat/completions`;
+  const payloadWithModel = { ...payload, model };
+
+  // Micro-retry loop (2 attempts)
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const response = await axios.post(endpoint, payloadWithModel, {
+        headers: { "Content-Type": "application/json" },
+        timeout: 4500, // 4.5s aggressive timeout per attempt
+      });
+
+      const content = response.data.choices[0]?.message?.content?.trim();
+      if (content) {
+        return content
+          .replace(/^(Here are|Optimized:)\s+/i, "")
+          .replace(/[,\.]/g, " ")
+          .replace(/\s\s+/g, " ")
+          .trim();
+      }
+    } catch (err: any) {
+      if (attempt === 2) {
+        console.warn(`⚠️ Keyword Optimization Failed after 2 attempts: ${err.message}`);
+      } else {
+        console.log(`🔄 Retrying Keyword Optimization (Attempt ${attempt + 1})...`);
+      }
+    }
+  }
+
+  return keyword; // Full fallback
 }
