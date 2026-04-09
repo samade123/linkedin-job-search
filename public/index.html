@@ -6,6 +6,7 @@
     <title>LinkedIn Career Intelligence Dashboard</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/date-fns@3.6.0/cdn.min.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         body { font-family: 'Inter', sans-serif; background-color: #f1f5f9; color: #0f172a; }
@@ -47,7 +48,14 @@
             </div>
         </header>
 
-        <div class="grid grid-cols-1 lg:grid-cols-12 gap-8">
+        <div class="mb-8 border-b border-slate-200">
+            <div class="flex space-x-8">
+                <button id="navLinkedIn" class="pb-3 text-sm font-bold border-b-2 border-slate-900 text-slate-900 transition-all">LinkedIn Network</button>
+                <button id="navJobBoards" class="pb-3 text-sm font-bold border-b-2 border-transparent text-slate-500 hover:text-slate-700 transition-all">Direct Job Boards</button>
+            </div>
+        </div>
+
+        <div id="viewLinkedIn" class="grid grid-cols-1 lg:grid-cols-12 gap-8">
             <!-- Sidebar: Controls -->
             <aside class="lg:col-span-4 space-y-6">
                 <div class="executive-panel p-6">
@@ -151,6 +159,100 @@
                 </div>
             </main>
         </div>
+
+        <!-- Job Boards View -->
+        <div id="viewJobBoards" class="hidden grid grid-cols-1 lg:grid-cols-12 gap-8">
+            <aside class="lg:col-span-4 space-y-6">
+                <!-- Manage Boards -->
+                <div class="executive-panel p-6">
+                    <h3 class="text-sm font-bold mb-5 flex items-center gap-2 text-slate-900 border-b border-slate-100 pb-3">
+                        <svg class="w-4 h-4 text-slate-700" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path></svg>
+                        Manage Job Boards
+                    </h3>
+                    <form id="addBoardForm" class="space-y-4">
+                        <div class="space-y-1.5">
+                            <label class="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Greenhouse Board ID</label>
+                            <input type="text" id="boardIdInput" placeholder="e.g. chaosindustries" required class="w-full bg-slate-50 border border-slate-200 rounded-lg px-4 py-2 text-sm focus:ring-1 focus:ring-slate-900 outline-none transition-all">
+                        </div>
+                        <button type="submit" class="w-full bg-slate-100 hover:bg-slate-200 text-slate-800 py-2.5 rounded-lg text-sm font-bold transition-all border border-slate-200">Add Board</button>
+                    </form>
+                </div>
+
+                <!-- Search Boards -->
+                <div class="executive-panel p-6">
+                    <h3 class="text-sm font-bold mb-5 flex items-center gap-2 text-slate-900 border-b border-slate-100 pb-3">
+                        <svg class="w-4 h-4 text-slate-700" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+                        Search Boards
+                    </h3>
+                    <form id="searchBoardForm" class="space-y-5">
+                        <div class="space-y-1.5">
+                            <label class="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Select Board</label>
+                            <select id="boardSelect" required class="w-full bg-slate-50 border border-slate-200 rounded-lg px-4 py-2 text-sm focus:ring-1 focus:ring-slate-900 outline-none transition-all">
+                                <option value="" disabled selected>No boards added</option>
+                            </select>
+                        </div>
+                        <div class="space-y-1.5">
+                            <label class="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">AI Intent Keyword</label>
+                            <input type="text" id="boardKeyword" required placeholder="e.g. Designer" class="w-full bg-slate-50 border border-slate-200 rounded-lg px-4 py-2 text-sm focus:ring-1 focus:ring-slate-900 outline-none transition-all">
+                        </div>
+                        <button type="submit" id="btnSearchBoard" class="w-full btn-primary py-2.5 text-sm font-bold flex items-center justify-center gap-2 mt-4">
+                            <span>Target Search</span>
+                        </button>
+                    </form>
+                </div>
+
+                <div id="boardStatusBox" class="hidden executive-panel p-4 border-l-4 border-slate-900 flex items-center gap-3">
+                    <div class="animate-spin rounded-full h-4 w-4 border-b-2 border-slate-900"></div>
+                    <span id="boardStatusText" class="text-xs font-semibold text-slate-600">Syncing board...</span>
+                </div>
+            </aside>
+
+            <main class="lg:col-span-8 space-y-8">
+                <!-- Search Goal Placeholder for Boards -->
+                <div id="boardSearchGoal" class="hidden"></div>
+                
+                <!-- Tabs for Board Jobs -->
+                <div class="flex gap-6 border-b border-slate-200 mb-6 items-center justify-between">
+                    <div class="flex gap-8">
+                        <button id="boardTabTopPicks" class="tab-active pb-3 text-sm font-bold flex items-center gap-2 transition-all">
+                            Target Matches <span id="boardCountTopPicks" class="bg-slate-900 text-white px-2 py-0.5 rounded text-[10px]">0</span>
+                        </button>
+                        <button id="boardTabAllJobs" class="pb-3 text-sm font-bold text-slate-400 flex items-center gap-2 transition-all hover:text-slate-600">
+                            Raw Board <span id="boardCountAllJobs" class="bg-slate-200 text-slate-600 px-2 py-0.5 rounded text-[10px]">0</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Results Table for Boards -->
+                <div class="executive-panel overflow-hidden">
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left">
+                            <thead class="bg-slate-50 border-b border-slate-200">
+                                <tr>
+                                    <th class="px-6 py-4 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                                        <div class="flex items-center justify-between gap-4">
+                                            <span>Professional Role</span>
+                                            <div id="boardStrictModeContainer" class="flex items-center gap-3">
+                                                <span class="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Precision Filter</span>
+                                                <button id="boardStrictToggle" class="w-7 h-4 bg-slate-900 rounded-full relative transition-all focus:outline-none">
+                                                    <div id="boardStrictToggleKnob" class="absolute left-3.5 top-0.5 w-3 h-3 bg-white rounded-full transition-all"></div>
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </th>
+                                    <th class="px-6 py-4 text-[10px] font-bold uppercase tracking-wider text-slate-500">Organization</th>
+                                    <th class="px-6 py-4 text-[10px] font-bold uppercase tracking-wider text-slate-500">Locality</th>
+                                    <th class="px-6 py-4 text-[10px] font-bold uppercase tracking-wider text-slate-500 text-right">Reference</th>
+                                </tr>
+                            </thead>
+                            <tbody id="boardResultsBody" class="divide-y divide-slate-100 text-sm">
+                                <tr><td colspan="4" class="px-6 py-12 text-center text-slate-400">Select a board to view openings...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </main>
+        </div>
     </div>
 
     <!-- Settings Modal -->
@@ -223,11 +325,33 @@
         document.addEventListener('DOMContentLoaded', () => {
             fetchModels();
             
-            // Trigger AI Warm-up locally
-            console.log("🔥 Initializing AI Warm-up...");
-            axios.post('/api/warmup', { model: selectedModel, baseUrl: aiBaseUrl })
-                .then(() => console.log("✨ AI Model Warmed Up"))
-                .catch(err => console.warn("AI Warm-up skipped:", err.message));
+            // Initial Warm-up
+            triggerWarmup();
+ 
+            // Return Pulse Watcher (Precise Timestamp Comparison)
+            let lastActivityPulse = new Date();
+ 
+            function triggerWarmup() {
+                console.log("🔥 AI Pulse: Pre-warming inference engine...");
+                axios.post('/api/warmup', { model: selectedModel, baseUrl: aiBaseUrl })
+                    .then(() => console.log("✨ AI Pulse: Engine is hot"))
+                    .catch(err => console.warn("AI Pulse skipped:", err.message));
+            }
+ 
+            function checkPulse() {
+                const now = new Date();
+                // If user returns after 2+ minutes, trigger a re-warm
+                if (window.dateFns && dateFns.differenceInMinutes(now, lastActivityPulse) >= 2) {
+                    console.log("🕒 User returned after gap. Re-priming AI...");
+                    triggerWarmup();
+                }
+                lastActivityPulse = now;
+            }
+ 
+            // Listen for any engagement to check pulse
+            ['mousemove', 'keydown', 'scroll', 'click'].forEach(evt => {
+                document.addEventListener(evt, checkPulse, { passive: true });
+            });
         });
 
         settingsBtn.onclick = () => settingsModal.classList.remove('hidden');
@@ -421,6 +545,200 @@
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);
+        };
+
+        // --- NEW: Job Boards Logic ---
+        const navLinkedIn = document.getElementById('navLinkedIn');
+        const navJobBoards = document.getElementById('navJobBoards');
+        const viewLinkedIn = document.getElementById('viewLinkedIn');
+        const viewJobBoards = document.getElementById('viewJobBoards');
+        
+        const addBoardForm = document.getElementById('addBoardForm');
+        const boardIdInput = document.getElementById('boardIdInput');
+        const searchBoardForm = document.getElementById('searchBoardForm');
+        const boardSelect = document.getElementById('boardSelect');
+        const boardKeyword = document.getElementById('boardKeyword');
+        const btnSearchBoard = document.getElementById('btnSearchBoard');
+        const boardStatusBox = document.getElementById('boardStatusBox');
+        const boardStatusText = document.getElementById('boardStatusText');
+        const boardSearchGoal = document.getElementById('boardSearchGoal');
+        
+        const boardResultsBody = document.getElementById('boardResultsBody');
+        const boardTabTopPicks = document.getElementById('boardTabTopPicks');
+        const boardTabAllJobs = document.getElementById('boardTabAllJobs');
+        const boardCountTopPicks = document.getElementById('boardCountTopPicks');
+        const boardCountAllJobs = document.getElementById('boardCountAllJobs');
+        const boardStrictToggle = document.getElementById('boardStrictToggle');
+        const boardStrictToggleKnob = document.getElementById('boardStrictToggleKnob');
+        const boardStrictModeContainer = document.getElementById('boardStrictModeContainer');
+
+        let myBoards = JSON.parse(localStorage.getItem('myJobBoards') || '[]');
+        let boardData = { allJobs: [], topPicks: [], goal: null, aiError: "" };
+        let boardActiveTab = 'topPicks';
+        let bIsStrictMode = true;
+
+        // Sync Boards UI
+        function renderBoardOptions() {
+            if (myBoards.length === 0) {
+                boardSelect.innerHTML = '<option value="" disabled selected>No boards added</option>';
+            } else {
+                boardSelect.innerHTML = myBoards.map(b => `<option value="${b}">${b}</option>`).join('');
+            }
+        }
+        renderBoardOptions();
+
+        // Top Navigation Tabs
+        navLinkedIn.onclick = () => {
+            navLinkedIn.classList.replace('border-transparent', 'border-slate-900');
+            navLinkedIn.classList.replace('text-slate-500', 'text-slate-900');
+            navJobBoards.classList.replace('border-slate-900', 'border-transparent');
+            navJobBoards.classList.replace('text-slate-900', 'text-slate-500');
+            viewLinkedIn.classList.remove('hidden');
+            viewJobBoards.classList.add('hidden');
+        };
+
+        navJobBoards.onclick = () => {
+            navJobBoards.classList.replace('border-transparent', 'border-slate-900');
+            navJobBoards.classList.replace('text-slate-500', 'text-slate-900');
+            navLinkedIn.classList.replace('border-slate-900', 'border-transparent');
+            navLinkedIn.classList.replace('text-slate-900', 'text-slate-500');
+            viewJobBoards.classList.remove('hidden');
+            viewLinkedIn.classList.add('hidden');
+        };
+
+        // Add Board
+        addBoardForm.onsubmit = (e) => {
+            e.preventDefault();
+            const newId = boardIdInput.value.trim().toLowerCase();
+            if (newId && !myBoards.includes(newId)) {
+                myBoards.push(newId);
+                localStorage.setItem('myJobBoards', JSON.stringify(myBoards));
+                renderBoardOptions();
+            }
+            boardIdInput.value = '';
+        };
+
+        function renderBoardGoal(goal) {
+            if (!goal || !goal.summary) return;
+            boardSearchGoal.innerHTML = `
+                <div class="mb-8 p-8 executive-panel border-l-8 border-slate-900 relative">
+                    <div class="flex items-center gap-3 mb-6">
+                        <div class="bg-slate-100 p-2 rounded-lg border border-slate-200">
+                            <svg class="w-5 h-5 text-slate-700" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                        </div>
+                        <div>
+                            <h4 class="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em] mb-0.5">Executive Summary</h4>
+                            <p class="text-[10px] text-slate-600 font-medium">Strategic Search Parameters Identified</p>
+                        </div>
+                    </div>
+                    <div class="space-y-6">
+                        <p class="text-lg font-medium leading-relaxed text-slate-800">${goal.summary}</p>
+                    </div>
+                </div>
+            `;
+            boardSearchGoal.classList.remove('hidden');
+        }
+
+        // Search Boards Function
+        function renderBoardJobs() {
+            let jobs = boardActiveTab === 'topPicks' ? boardData.topPicks : boardData.allJobs;
+            if (boardActiveTab === 'topPicks' && bIsStrictMode) {
+                jobs = jobs.filter(j => j.isVetted);
+            }
+
+            boardCountTopPicks.innerText = boardData.topPicks.filter(j => bIsStrictMode ? j.isVetted : true).length;
+            boardCountAllJobs.innerText = boardData.allJobs.length;
+            boardStrictModeContainer.style.visibility = boardActiveTab === 'topPicks' ? 'visible' : 'hidden';
+
+            if (jobs.length === 0) {
+                boardResultsBody.innerHTML = `<tr><td colspan="4" class="px-6 py-12 text-center text-slate-400">No jobs found. ${bIsStrictMode && boardActiveTab === 'topPicks' ? 'Try turning off Precision Filter!' : ''}</td></tr>`;
+                return;
+            }
+
+            boardResultsBody.innerHTML = jobs.map(job => `
+                <tr class="hover:bg-slate-50 transition-colors ${!job.isVetted && boardActiveTab === 'topPicks' ? 'opacity-60 bg-slate-100/30' : ''}">
+                    <td class="px-6 py-4">
+                        <div class="flex items-center gap-2">
+                            <span class="font-bold text-slate-900">${job.position}</span>
+                            ${job.isVetted ? '<span class="text-[8px] bg-slate-900 text-white px-2 py-0.5 rounded font-bold uppercase tracking-widest">Qualified</span>' : ''}
+                        </div>
+                        <div class="text-[10px] text-slate-400 mt-1 uppercase font-bold tracking-wider">${job.agoTime || ''}</div>
+                    </td>
+                    <td class="px-6 py-4 text-slate-600 font-semibold uppercase text-xs">${job.company}</td>
+                    <td class="px-6 py-4"><span class="text-slate-700 text-xs font-bold border-b border-slate-200">${job.location}</span></td>
+                    <td class="px-6 py-4 text-right">
+                        <a href="${job.jobUrl}" target="_blank" class="inline-flex items-center justify-center bg-white border border-slate-300 px-4 py-1.5 rounded text-[11px] font-bold text-slate-800 hover:bg-slate-50 transition-all">Review Role</a>
+                    </td>
+                </tr>
+            `).join('');
+        }
+
+        boardTabTopPicks.onclick = () => {
+            boardActiveTab = 'topPicks';
+            boardTabTopPicks.classList.add('tab-active');
+            boardTabAllJobs.classList.remove('tab-active');
+            boardTabAllJobs.classList.add('text-slate-400');
+            renderBoardJobs();
+        };
+
+        boardTabAllJobs.onclick = () => {
+            boardActiveTab = 'allJobs';
+            boardTabAllJobs.classList.add('tab-active');
+            boardTabTopPicks.classList.remove('tab-active');
+            boardTabTopPicks.classList.add('text-slate-400');
+            renderBoardJobs();
+        };
+
+        boardStrictToggle.onclick = () => {
+            bIsStrictMode = !bIsStrictMode;
+            if (bIsStrictMode) {
+                boardStrictToggle.classList.replace('bg-slate-300', 'bg-slate-900');
+                boardStrictToggleKnob.classList.replace('left-0.5', 'left-3.5');
+            } else {
+                boardStrictToggle.classList.replace('bg-slate-900', 'bg-slate-300');
+                boardStrictToggleKnob.classList.replace('left-3.5', 'left-0.5');
+            }
+            renderBoardJobs();
+        };
+
+        searchBoardForm.onsubmit = async (e) => {
+            e.preventDefault();
+            const boardId = boardSelect.value;
+            const keyword = boardKeyword.value;
+            if (!boardId) return;
+
+            btnSearchBoard.disabled = true;
+            boardStatusBox.classList.remove('hidden');
+            boardSearchGoal.classList.add('hidden');
+            boardStatusText.innerText = `Fetching ${boardId} job board...`;
+            boardResultsBody.innerHTML = `<tr><td colspan="4" class="px-6 py-12 text-center"><div class="loading-shimmer h-4 w-64 mx-auto rounded"></div></td></tr>`;
+
+            const payload = { boardId, keyword, model: selectedModel, baseUrl: aiBaseUrl };
+
+            // 1. Goal Generation Concurrent
+            let reqGoal = null;
+            axios.post('/api/goal', { keyword, location: 'Any', model: selectedModel, baseUrl: aiBaseUrl })
+                .then(res => {
+                    reqGoal = res.data;
+                    renderBoardGoal(res.data);
+                    if (!btnSearchBoard.disabled) return;
+                    boardStatusText.innerText = "Analyzing target role intent...";
+                }).catch(err => console.warn(err));
+
+            // Wait a small bit in case goal generation is instant, then search
+            axios.post('/api/greenhouse/search', payload)
+                .then(res => {
+                    boardStatusText.innerText = "Processing matches...";
+                    boardData = { ...res.data, goal: reqGoal };
+                    renderBoardJobs();
+                })
+                .catch(err => {
+                    boardResultsBody.innerHTML = `<tr><td colspan="4" class="px-6 py-12 text-center text-red-500">Board search failed.</td></tr>`;
+                })
+                .finally(() => {
+                    btnSearchBoard.disabled = false;
+                    boardStatusBox.classList.add('hidden');
+                });
         };
     </script>
 </body>

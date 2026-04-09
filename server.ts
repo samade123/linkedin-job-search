@@ -8,18 +8,20 @@ import open from "open";
 // Import modules
 import { Job } from "./src/types";
 import { getEffectiveQueryOptions } from "./src/args";
-import { filterJobsWithAI, generateJobDescription, optimizeSearchKeywords, DEFAULT_AI_MODEL, DEFAULT_BASE_URL } from "./src/services/aiService";
+import { filterJobsWithAI, generateJobDescription, optimizeSearchKeywords, normalizeCountry, summarizeJobRole, rateJobCompatibility, DEFAULT_AI_MODEL, DEFAULT_BASE_URL } from "./src/services/aiService";
 import { PORT } from "./src/config";
 
 const app = express();
 
 // Middleware
 app.use(express.json());
-const PUBLIC_PATH = path.resolve(process.cwd(), "public");
+const PUBLIC_PATH = path.resolve(process.cwd(), "client/dist");
 app.use(express.static(PUBLIC_PATH));
 
 console.log(`📁 Static files served from: ${PUBLIC_PATH}`);
 
+// In-memory cache for Greenhouse jobs (keyed by boardId)
+const greenhouseCache: Record<string, Job[]> = {};
 /**
  * AI Warm-up endpoint to pre-load models.
  */
@@ -53,9 +55,13 @@ app.get("/api/models", async (req: Request, res: Response) => {
  */
 app.post("/api/goal", async (req: Request, res: Response) => {
   try {
-    const { model, ...clientOptions } = req.body;
-    const queryOptions = { ...getEffectiveQueryOptions(), ...clientOptions };
-    const searchGoal = await generateJobDescription(queryOptions, model);
+    const { model, baseUrl, targetCountry, ...clientOptions } = req.body;
+    let normalizedCountry = targetCountry;
+    if (targetCountry) {
+      normalizedCountry = await normalizeCountry(targetCountry, model, baseUrl);
+    }
+    const queryOptions = { ...getEffectiveQueryOptions(), ...clientOptions, targetCountry: normalizedCountry };
+    const searchGoal = await generateJobDescription(queryOptions, model, baseUrl);
     res.json(searchGoal);
   } catch (error: any) {
     res.status(500).json({ error: error.message });
@@ -67,8 +73,12 @@ app.post("/api/goal", async (req: Request, res: Response) => {
  */
 app.post("/api/search", async (req: Request, res: Response) => {
   try {
-    const { goal, model, baseUrl, ...clientOptions } = req.body;
-    const queryOptions = { ...getEffectiveQueryOptions(), ...clientOptions };
+    const { goal, model, baseUrl, targetCountry, ...clientOptions } = req.body;
+    let normalizedCountry = targetCountry;
+    if (targetCountry) {
+      normalizedCountry = await normalizeCountry(targetCountry, model, baseUrl);
+    }
+    const queryOptions = { ...getEffectiveQueryOptions(), ...clientOptions, targetCountry: normalizedCountry };
 
     console.log(`🚀 [START] API Search: "${queryOptions.keyword}" (${queryOptions.location || 'Global'})`);
 
@@ -134,6 +144,130 @@ app.post("/api/search", async (req: Request, res: Response) => {
 
   } catch (error: any) {
     console.error("API Search Error:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * Handle incoming search requests for Greenhouse boards.
+ */
+app.post("/api/greenhouse/search", async (req: Request, res: Response) => {
+  try {
+    const { boardId, keyword, model, baseUrl, goal } = req.body;
+    console.log(`🚀 [START] API Greenhouse Search: "${keyword}" on board "${boardId}"`);
+
+    // Fetch from greenhouse
+    console.time("⏱️ Greenhouse Job Crawl");
+    let allJobs: Job[] = [];
+    try {
+      const gRes = await axios.get(`https://boards-api.greenhouse.io/v1/boards/${boardId}/jobs?content=true`);
+      const rawJobs = gRes.data.jobs || [];
+      
+      const formatTimeAgo = (dateStr: string) => {
+        const date = new Date(dateStr);
+        const diffMs = Date.now() - date.getTime();
+        const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+        if (diffDays === 0) return "Today";
+        if (diffDays === 1) return "1 day ago";
+        return `${diffDays} days ago`;
+      };
+      
+      allJobs = rawJobs.map((j: any) => ({
+        id: j.id,
+        position: j.title || "Unknown",
+        company: j.company_name || boardId,
+        location: j.location?.name || "Unknown",
+        date: j.updated_at || "",
+        agoTime: j.updated_at ? formatTimeAgo(j.updated_at) : "",
+        jobUrl: j.absolute_url || "",
+        content: j.content || ""
+      }));
+
+      // Store in cache
+      greenhouseCache[boardId] = allJobs;
+    } catch (crawlError: any) {
+      console.error(`❌ Greenhouse Crawl ERROR: ${crawlError.message}`);
+      return res.status(500).json({ error: "Failed to fetch from Greenhouse" });
+    }
+    console.timeEnd("⏱️ Greenhouse Job Crawl");
+
+    let topPicks: Job[] = [];
+    let aiErrorMessage = "";
+
+    if (allJobs.length > 0) {
+      console.log(`📦 Jobs Found: ${allJobs.length}. Starting AI Filtering...`);
+      console.time("⏱️ AI Goal & Filtering");
+      try {
+        const { targetCountry } = req.body;
+        let normalizedCountry = targetCountry;
+        if (targetCountry) {
+          normalizedCountry = await normalizeCountry(targetCountry, model, baseUrl);
+        }
+        const intentOptions = { ...getEffectiveQueryOptions(), keyword, location: "Any", targetCountry: normalizedCountry };
+        const effectiveGoal = goal || await generateJobDescription(intentOptions, model, baseUrl);
+
+        const aiResult = await filterJobsWithAI(allJobs, effectiveGoal, model, baseUrl);
+        topPicks = aiResult.filteredJobs;
+        aiErrorMessage = aiResult.errorMessage;
+      } catch (aiError: any) {
+        console.error(`❌ AI Processing ERROR: ${aiError.message}`);
+        aiErrorMessage = `AI Error: ${aiError.message}`;
+      }
+      console.timeEnd("⏱️ AI Goal & Filtering");
+    } else {
+      console.warn("🚫 No jobs found from Greenhouse API.");
+    }
+
+    console.log(`✅ [COMPLETE] Greenhouse Search finished. Top Picks: ${topPicks.length}`);
+    res.json({
+      allJobs,
+      topPicks,
+      aiError: aiErrorMessage
+    });
+
+  } catch (error: any) {
+    console.error("API Greenhouse Search Error:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * Perform a deep AI analysis on a specific Greenhouse job.
+ */
+app.post("/api/greenhouse/deep-analyze", async (req: Request, res: Response) => {
+  try {
+    const { boardId, jobId, searchGoal, model, baseUrl } = req.body;
+    console.log(`🧠 [START] Deep Analysis: Job ${jobId} on Board ${boardId}`);
+
+    const cachedJobs = greenhouseCache[boardId] || [];
+    const job = cachedJobs.find(j => String(j.id) === String(jobId));
+
+    if (!job || !job.content) {
+      console.error(`❌ Job ${jobId} not found in cache or lacks content.`);
+      return res.status(404).json({ error: "Job details not found in cache. Please re-run search." });
+    }
+
+    // Strip HTML for the AI
+    const cleanContent = job.content.replace(/<[^>]*>?/gm, ' ');
+
+    console.time("⏱️ AI Deep Analysis (Sequential)");
+    
+    // Pass 1: Summarize
+    const summary = await summarizeJobRole(cleanContent, model, baseUrl);
+    
+    // Pass 2: Rate
+    const rating = await rateJobCompatibility(cleanContent, searchGoal, model, baseUrl);
+    
+    console.timeEnd("⏱️ AI Deep Analysis (Sequential)");
+
+    res.json({
+      summary,
+      score: rating.score,
+      reasons: rating.reasons
+    });
+
+  } catch (error: any) {
+    console.error("Deep Analyze Error:", error);
     res.status(500).json({ error: error.message });
   }
 });

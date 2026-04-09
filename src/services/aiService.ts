@@ -146,6 +146,7 @@ Rules:
           content: `Translate these filters into a structured search goal:
 - Keywords: ${queryOptions.keyword}
 - Location: ${queryOptions.location || "Global"}
+- Target Country: ${queryOptions.targetCountry || "Any"}
 - Job Type: ${queryOptions.jobType || "Any"}
 - Remote: ${queryOptions.remoteFilter || "Any"}
 - Salary: ${queryOptions.salary || "Not specified"}
@@ -266,7 +267,7 @@ Example: [0, 2, 9]`,
 Intent: "${searchGoal.summary}"
 Target Roles: ${searchGoal.titles.join(", ")}
  
-Be extremely strict. Ensure the role, seniority, and core function match the user's intent. Output ONLY a valid JSON array of the integer indices.
+Be extremely strict. Ensure the role, seniority, and core function match the user's intent. CRITICAL: Deduce the physical country of the job from its location field. If it does not conceptually match the target country mentioned in the Intent, reject it immediately. Output ONLY a valid JSON array of the integer indices.
 Format: [index1, index2, ...]
 Example: [1, 3]`,
             },
@@ -349,4 +350,142 @@ export async function optimizeSearchKeywords(
   }
 
   return keyword; // Full fallback
+}
+
+/**
+ * Normalizes a country name using AI to ensure formal spelling and formatting.
+ */
+export async function normalizeCountry(
+  country: string,
+  model: string = DEFAULT_AI_MODEL,
+  baseUrl: string = DEFAULT_BASE_URL,
+): Promise<string> {
+  if (!country || country.toLowerCase() === "global" || country.toLowerCase() === "any") {
+    return "Global";
+  }
+
+  const payload = {
+    messages: [
+      {
+        role: "system",
+        content: "You are a geographic data specialist. Normalize the provided country name into its formal, standard English name (e.g., 'the states' -> 'United States', 'uk' -> 'United Kingdom'). If the input is already formal, return it as is. If it's not a recognized country, return the input. Return ONLY the formal name, no extra text.",
+      },
+      {
+        role: "user",
+        content: `Country: ${country}`,
+      },
+    ],
+    temperature: 0.1,
+    max_tokens: 32,
+  };
+
+  const endpoint = `${baseUrl.replace(/\/$/, "")}/chat/completions`;
+  const payloadWithModel = { ...payload, model };
+
+  try {
+    const response = await axios.post(endpoint, payloadWithModel, {
+      headers: { "Content-Type": "application/json" },
+      timeout: 5000,
+    });
+
+    const content = response.data.choices[0]?.message?.content?.trim();
+    if (content) {
+      return content.replace(/[,\.]/g, "").trim();
+    }
+  } catch (err: any) {
+    console.warn(`⚠️ Country Normalization Failed: ${err.message}`);
+  }
+
+  return country;
+}
+
+/**
+ * Summarizes a full job description into a concise 2-3 sentence overview.
+ */
+export async function summarizeJobRole(
+  description: string,
+  model: string = DEFAULT_AI_MODEL,
+  baseUrl: string = DEFAULT_BASE_URL,
+): Promise<string> {
+  const payload = {
+    messages: [
+      {
+        role: "system",
+        content: "You are an expert technical recruiter. Summarize the provided job description into a high-impact, professional summary of exactly 2-3 sentences focusing on the primary responsibilities and the core value the role brings. No fluff. No extra text.",
+      },
+      {
+        role: "user",
+        content: `Job Description (HTML removed): ${description.substring(0, 8000)}`,
+      },
+    ],
+    temperature: 0.1,
+    max_tokens: 250,
+  };
+
+  const endpoint = `${baseUrl.replace(/\/$/, "")}/chat/completions`;
+  const payloadWithModel = { ...payload, model };
+
+  try {
+    const response = await axios.post(endpoint, payloadWithModel, {
+      headers: { "Content-Type": "application/json" },
+      timeout: 10000,
+    });
+    return response.data.choices[0]?.message?.content?.trim() || "Summary unavailable.";
+  } catch (err: any) {
+    console.warn(`⚠️ Summarization Failed: ${err.message}`);
+    return "Failed to generate summary.";
+  }
+}
+
+/**
+ * Evaluates a job description against a search goal to provide a compatibility score and targeted reasons.
+ */
+export async function rateJobCompatibility(
+  description: string,
+  searchGoal: SearchGoal,
+  model: string = DEFAULT_AI_MODEL,
+  baseUrl: string = DEFAULT_BASE_URL,
+): Promise<{ score: number; reasons: string[] }> {
+  const payload = {
+    messages: [
+      {
+        role: "system",
+        content: `You are a career matching engine. Compare the job description with the user's search intent. Output ONLY a valid JSON object.
+ 
+Intent: "${searchGoal.summary}"
+Target Roles: ${searchGoal.titles.join(", ")}
+ 
+Format:
+{
+  "score": integer (0-100),
+  "reasons": ["3-4 bulleted reasons explaining the score focusing on skills, location, and seniority alignment"]
+}`,
+      },
+      {
+        role: "user",
+        content: `Job Description: ${description.substring(0, 8000)}`,
+      },
+    ],
+    temperature: 0.1,
+    max_tokens: 500,
+  };
+
+  const endpoint = `${baseUrl.replace(/\/$/, "")}/chat/completions`;
+  const payloadWithModel = { ...payload, model };
+
+  try {
+    const response = await axios.post(endpoint, payloadWithModel, {
+      headers: { "Content-Type": "application/json" },
+      timeout: 10000,
+    });
+    const content = response.data.choices[0]?.message?.content?.trim();
+    const parsed = JSON.parse(cleanJsonString(content));
+    return {
+      score: typeof parsed.score === 'number' ? parsed.score : 0,
+      reasons: Array.isArray(parsed.reasons) ? parsed.reasons : ["Analysis inconclusive."]
+    };
+  } catch (err: any) {
+    console.warn(`⚠️ Compatibility Rating Failed: ${err.message}`);
+    return { score: 0, reasons: ["Failed to calculate compatibility."] };
+  }
 }

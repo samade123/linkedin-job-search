@@ -1,6 +1,7 @@
 // src/types/index.ts
 
 export interface Job {
+  id?: string | number;
   position: string;
   company: string;
   companyLogo?: string;
@@ -10,6 +11,7 @@ export interface Job {
   salary?: string;
   jobUrl: string;
   isVetted?: boolean;
+  content?: string;
 }
 
 export interface QueryOptions {
@@ -22,6 +24,7 @@ export interface QueryOptions {
   salary: "40000" | "60000" | "80000" | "100000" | "120000" | "";
   experienceLevel: "internship" | "entry level" | "associate" | "senior" | "director" | "executive" | "";
   sortBy: "recent" | "relevant";
+  targetCountry?: string;
 }
 
 export interface SearchGoal {
