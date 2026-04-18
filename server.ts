@@ -8,7 +8,7 @@ import open from "open";
 // Import modules
 import { Job } from "./src/types";
 import { getEffectiveQueryOptions } from "./src/args";
-import { filterJobsWithAI, generateJobDescription, optimizeSearchKeywords, normalizeCountry, summarizeJobRole, rateJobCompatibility, DEFAULT_AI_MODEL, DEFAULT_BASE_URL } from "./src/services/aiService";
+import { filterJobsWithAI, generateJobDescription, optimizeSearchKeywords, normalizeCountry, summarizeJobRole, rateJobCompatibility, analyzeJobCultureAndBenefits, analyzeJobProsAndCons, extractJobQuotes, runAiDiagnostics, DEFAULT_AI_MODEL, DEFAULT_BASE_URL } from "./src/services/aiService";
 import { PORT } from "./src/config";
 
 const app = express();
@@ -18,17 +18,16 @@ app.use(express.json());
 const PUBLIC_PATH = path.resolve(process.cwd(), "client/dist");
 app.use(express.static(PUBLIC_PATH));
 
-console.log(`📁 Static files served from: ${PUBLIC_PATH}`);
+console.log(`[FILES] Static files served from: ${PUBLIC_PATH}`);
 
-// In-memory cache for Greenhouse jobs (keyed by boardId)
-const greenhouseCache: Record<string, Job[]> = {};
+
 /**
  * AI Warm-up endpoint to pre-load models.
  */
 app.post("/api/warmup", async (req: Request, res: Response) => {
   try {
     const { model, baseUrl } = req.body;
-    console.log(`🔥 AI Warm-up Triggered (Target: ${model || DEFAULT_AI_MODEL})`);
+    console.log(`[WARMUP] AI Warm-up Triggered (Target: ${model || DEFAULT_AI_MODEL})`);
     await optimizeSearchKeywords("warmup", model || DEFAULT_AI_MODEL, baseUrl || DEFAULT_BASE_URL);
     res.json({ status: "warmed" });
   } catch (error: any) {
@@ -41,7 +40,8 @@ app.post("/api/warmup", async (req: Request, res: Response) => {
  */
 app.get("/api/models", async (req: Request, res: Response) => {
   try {
-    const response = await axios.get("http://127.0.0.1:18181/v1/models");
+    const response = await axios.get("http://localhost:8001/v1/models");
+    // const response = await axios.get("http://127.0.0.1:18181/v1/models");
     res.json(response.data);
   } catch (error: any) {
     console.warn("Failed to fetch models from local AI server:", error.message);
@@ -80,45 +80,45 @@ app.post("/api/search", async (req: Request, res: Response) => {
     }
     const queryOptions = { ...getEffectiveQueryOptions(), ...clientOptions, targetCountry: normalizedCountry };
 
-    console.log(`🚀 [START] API Search: "${queryOptions.keyword}" (${queryOptions.location || 'Global'})`);
+    console.log(`[START] API Search: "${queryOptions.keyword}" (${queryOptions.location || 'Global'})`);
 
     // 1. AI Keyword Optimization Stage
     let originalKeyword = queryOptions.keyword;
-    console.time("⏱️ AI Keyword Optimization");
+    console.time("[TIME] AI Keyword Optimization");
     try {
       const optimized = await optimizeSearchKeywords(originalKeyword, model, baseUrl);
       if (optimized !== originalKeyword) {
-        console.log(`✨ AI Expanded Keywords: "${optimized}"`);
+        console.log(`[AI] Expanded Keywords: "${optimized}"`);
         queryOptions.keyword = optimized;
       }
     } catch (optError: any) {
-      console.warn(`⚠️ Keyword Optimization Failed: ${optError.message}`);
+      console.warn(`[WARN] Keyword Optimization Failed: ${optError.message}`);
     }
-    console.timeEnd("⏱️ AI Keyword Optimization");
+    console.timeEnd("[TIME] AI Keyword Optimization");
 
     // 2. LinkedIn Crawler Stage
     let allJobs: Job[] = [];
-    console.time("⏱️ LinkedIn Job Crawl");
+    console.time("[TIME] LinkedIn Job Crawl");
     try {
       const jobsResponse = await (linkedIn as any).query(queryOptions);
       if (Array.isArray(jobsResponse)) {
         allJobs = jobsResponse;
       } else {
-        console.warn("⚠️ LinkedIn API returned non-array response:", typeof jobsResponse);
+        console.warn("[WARN] LinkedIn API returned non-array response:", typeof jobsResponse);
       }
     } catch (crawlError: any) {
-      console.error(`❌ LinkedIn Crawl ERROR: ${crawlError.message}`);
+      console.error(`[ERROR] LinkedIn Crawl ERROR: ${crawlError.message}`);
     }
-    console.timeEnd("⏱️ LinkedIn Job Crawl");
+    console.timeEnd("[TIME] LinkedIn Job Crawl");
 
     let topPicks: Job[] = [];
     let aiErrorMessage = "";
 
     if (allJobs.length > 0) {
-      console.log(`📦 Jobs Found: ${allJobs.length}. Starting AI Filtering...`);
+      console.log(`[DATA] Jobs Found: ${allJobs.length}. Starting AI Filtering...`);
       
       // 3. AI Filtering Stage
-      console.time("⏱️ AI Goal & Filtering");
+      console.time("[TIME] AI Goal & Filtering");
       try {
         const intentOptions = { ...queryOptions, keyword: originalKeyword };
         const effectiveGoal = goal || await generateJobDescription(intentOptions, model, baseUrl);
@@ -127,15 +127,15 @@ app.post("/api/search", async (req: Request, res: Response) => {
         topPicks = aiResult.filteredJobs;
         aiErrorMessage = aiResult.errorMessage;
       } catch (aiError: any) {
-        console.error(`❌ AI Processing ERROR: ${aiError.message}`);
+        console.error(`[ERROR] AI Processing ERROR: ${aiError.message}`);
         aiErrorMessage = `AI Error: ${aiError.message}`;
       }
-      console.timeEnd("⏱️ AI Goal & Filtering");
+      console.timeEnd("[TIME] AI Goal & Filtering");
     } else {
-      console.warn("🚫 No jobs found from LinkedIn crawler.");
+      console.warn("[NONE] No jobs found from LinkedIn crawler.");
     }
 
-    console.log(`✅ [COMPLETE] Search finished. Top Picks: ${topPicks.length}`);
+    console.log(`[COMPLETE] Search finished. Top Picks: ${topPicks.length}`);
     res.json({
       allJobs,
       topPicks,
@@ -154,10 +154,10 @@ app.post("/api/search", async (req: Request, res: Response) => {
 app.post("/api/greenhouse/search", async (req: Request, res: Response) => {
   try {
     const { boardId, keyword, model, baseUrl, goal } = req.body;
-    console.log(`🚀 [START] API Greenhouse Search: "${keyword}" on board "${boardId}"`);
+    console.log(`[START] API Greenhouse Search: "${keyword}" on board "${boardId}"`);
 
     // Fetch from greenhouse
-    console.time("⏱️ Greenhouse Job Crawl");
+    console.time("[TIME] Greenhouse Job Crawl");
     let allJobs: Job[] = [];
     try {
       const gRes = await axios.get(`https://boards-api.greenhouse.io/v1/boards/${boardId}/jobs?content=true`);
@@ -183,20 +183,19 @@ app.post("/api/greenhouse/search", async (req: Request, res: Response) => {
         content: j.content || ""
       }));
 
-      // Store in cache
-      greenhouseCache[boardId] = allJobs;
+
     } catch (crawlError: any) {
-      console.error(`❌ Greenhouse Crawl ERROR: ${crawlError.message}`);
+      console.error(`[ERROR] Greenhouse Crawl ERROR: ${crawlError.message}`);
       return res.status(500).json({ error: "Failed to fetch from Greenhouse" });
     }
-    console.timeEnd("⏱️ Greenhouse Job Crawl");
+    console.timeEnd("[TIME] Greenhouse Job Crawl");
 
     let topPicks: Job[] = [];
     let aiErrorMessage = "";
 
     if (allJobs.length > 0) {
-      console.log(`📦 Jobs Found: ${allJobs.length}. Starting AI Filtering...`);
-      console.time("⏱️ AI Goal & Filtering");
+      console.log(`[DATA] Jobs Found: ${allJobs.length}. Starting AI Filtering...`);
+      console.time("[TIME] AI Goal & Filtering");
       try {
         const { targetCountry } = req.body;
         let normalizedCountry = targetCountry;
@@ -210,15 +209,15 @@ app.post("/api/greenhouse/search", async (req: Request, res: Response) => {
         topPicks = aiResult.filteredJobs;
         aiErrorMessage = aiResult.errorMessage;
       } catch (aiError: any) {
-        console.error(`❌ AI Processing ERROR: ${aiError.message}`);
+        console.error(`[ERROR] AI Processing ERROR: ${aiError.message}`);
         aiErrorMessage = `AI Error: ${aiError.message}`;
       }
-      console.timeEnd("⏱️ AI Goal & Filtering");
+      console.timeEnd("[TIME] AI Goal & Filtering");
     } else {
-      console.warn("🚫 No jobs found from Greenhouse API.");
+      console.warn("[NONE] No jobs found from Greenhouse API.");
     }
 
-    console.log(`✅ [COMPLETE] Greenhouse Search finished. Top Picks: ${topPicks.length}`);
+    console.log(`[COMPLETE] Greenhouse Search finished. Top Picks: ${topPicks.length}`);
     res.json({
       allJobs,
       topPicks,
@@ -236,34 +235,44 @@ app.post("/api/greenhouse/search", async (req: Request, res: Response) => {
  */
 app.post("/api/greenhouse/deep-analyze", async (req: Request, res: Response) => {
   try {
-    const { boardId, jobId, searchGoal, model, baseUrl } = req.body;
-    console.log(`🧠 [START] Deep Analysis: Job ${jobId} on Board ${boardId}`);
+    const { content, searchGoal, model, baseUrl } = req.body;
+    console.log(`[AI] [START] Deep Analysis session`);
 
-    const cachedJobs = greenhouseCache[boardId] || [];
-    const job = cachedJobs.find(j => String(j.id) === String(jobId));
-
-    if (!job || !job.content) {
-      console.error(`❌ Job ${jobId} not found in cache or lacks content.`);
-      return res.status(404).json({ error: "Job details not found in cache. Please re-run search." });
+    if (!content) {
+      console.error(`[ERROR] Content missing for deep analysis.`);
+      return res.status(400).json({ error: "Job content is missing." });
     }
 
     // Strip HTML for the AI
-    const cleanContent = job.content.replace(/<[^>]*>?/gm, ' ');
+    const cleanContent = content.replace(/<[^>]*>?/gm, ' ');
 
-    console.time("⏱️ AI Deep Analysis (Sequential)");
+    console.time("[TIME] AI Deep Analysis (Sequential)");
     
     // Pass 1: Summarize
     const summary = await summarizeJobRole(cleanContent, model, baseUrl);
     
     // Pass 2: Rate
     const rating = await rateJobCompatibility(cleanContent, searchGoal, model, baseUrl);
+
+    // Pass 3: Culture & Benefits
+    const cultureBenefits = await analyzeJobCultureAndBenefits(cleanContent, model, baseUrl);
+
+    // Pass 4: Pros & Cons
+    const prosCons = await analyzeJobProsAndCons(cleanContent, model, baseUrl);
+
+    // Pass 5: Direct Quotes
+    const quotes = await extractJobQuotes(cleanContent, model, baseUrl);
     
-    console.timeEnd("⏱️ AI Deep Analysis (Sequential)");
+    console.timeEnd("[TIME] AI Deep Analysis (Sequential)");
 
     res.json({
       summary,
       score: rating.score,
-      reasons: rating.reasons
+      reasons: rating.reasons,
+      culture: cultureBenefits,
+      pros: prosCons.pros,
+      cons: prosCons.cons,
+      quotes: quotes
     });
 
   } catch (error: any) {
@@ -273,17 +282,51 @@ app.post("/api/greenhouse/deep-analyze", async (req: Request, res: Response) => 
 });
 
 /**
+ * Isolated summary generation for reloading.
+ */
+app.post("/api/greenhouse/deep-summary", async (req: Request, res: Response) => {
+  try {
+    const { content, model, baseUrl } = req.body;
+    if (!content) return res.status(400).json({ error: "Job content is missing." });
+    
+    // Strip HTML
+    const cleanContent = content.replace(/<[^>]*>?/gm, ' ');
+    console.log(`[AI] [RELOAD] Regenerating Executive Summary...`);
+    const summary = await summarizeJobRole(cleanContent, model, baseUrl);
+    res.json({ summary });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+
+/**
+ * AI Diagnostic endpoint.
+ */
+app.post("/api/ai/diagnostics", async (req: Request, res: Response) => {
+  try {
+    const { model, baseUrl } = req.body;
+    console.log(`[AI] [DEBUG] Starting System Diagnostics for ${model}...`);
+    const results = await runAiDiagnostics(model, baseUrl);
+    res.json(results);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+
+/**
  * Health check endpoint
  */
-app.get("/health", (req, res) => res.send("Server is alive! 🚀"));
+app.get("/health", (req, res) => res.send("Server is alive! [START]"));
 
 // Serve the index.html for all non-API routes (SPA support)
 app.get("*", (req: Request, res: Response) => {
   const indexPath = path.join(PUBLIC_PATH, "index.html");
-  console.log(`📄 Serving index.html from: ${indexPath}`);
+  console.log(`[PAGE] Serving index.html from: ${indexPath}`);
   res.sendFile(indexPath, (err) => {
     if (err) {
-      console.error(`❌ Error sending index.html:`, err);
+      console.error(`[ERROR] Error sending index.html:`, err);
       res.status(500).send("Error loading the page. Check server logs.");
     }
   });
@@ -291,14 +334,14 @@ app.get("*", (req: Request, res: Response) => {
 
 // Start the server
 app.listen(PORT, async () => {
-    console.log(`\n🚀 Server is running on http://localhost:${PORT}`);
-    console.log(`🌐 Dashboard: http://localhost:${PORT}\n`);
+    console.log(`\n[SERVER] Server is running on http://localhost:${PORT}`);
+    console.log(`[WEB] Dashboard: http://localhost:${PORT}\n`);
     
     // Background warm-up
-    console.log("🔥 Initializing AI Warm-up sequence...");
+    console.log("[WARMUP] Initializing AI Warm-up sequence...");
     optimizeSearchKeywords("warmup", DEFAULT_AI_MODEL, DEFAULT_BASE_URL)
-        .then(() => console.log("✨ AI Model is warm and ready!"))
-        .catch(err => console.warn("⚠️ Initial AI warm-up failed (Server may be offline)."));
+        .then(() => console.log("[DONE] AI Model is warm and ready!"))
+        .catch(err => console.warn("[WARN] Initial AI warm-up failed (Server may be offline)."));
 
   // Open browser to the UI
   open(`http://localhost:${PORT}`).catch(err => console.error("Failed to open browser:", err));

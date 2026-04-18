@@ -332,9 +332,9 @@
             let lastActivityPulse = new Date();
  
             function triggerWarmup() {
-                console.log("🔥 AI Pulse: Pre-warming inference engine...");
+                console.log("[AI] Pulse: Pre-warming inference engine...");
                 axios.post('/api/warmup', { model: selectedModel, baseUrl: aiBaseUrl })
-                    .then(() => console.log("✨ AI Pulse: Engine is hot"))
+                    .then(() => console.log("[DONE] AI Pulse: Engine is hot"))
                     .catch(err => console.warn("AI Pulse skipped:", err.message));
             }
  
@@ -342,7 +342,7 @@
                 const now = new Date();
                 // If user returns after 2+ minutes, trigger a re-warm
                 if (window.dateFns && dateFns.differenceInMinutes(now, lastActivityPulse) >= 2) {
-                    console.log("🕒 User returned after gap. Re-priming AI...");
+                    console.log("[TIME] User returned after gap. Re-priming AI...");
                     triggerWarmup();
                 }
                 lastActivityPulse = now;

@@ -96,7 +96,9 @@
             :isOpen="isAnalysisModalOpen" 
             :job="analyzingJob" 
             :analysis="analysisResult" 
-            @close="isAnalysisModalOpen = false" 
+            :criteria="activeTab === 'linkedin' ? linkedinData.goal : boardData.goal"
+            @close="isAnalysisModalOpen = false"
+            @reload-summary="handleReloadSummary"
         />
     </div>
 </template>
@@ -194,14 +196,10 @@ const handleDeepFind = async (job: any) => {
     analyzingJob.value = job;
     analysisResult.value = null;
     isAnalysisModalOpen.value = true;
-    
-    // The board ID is stored in the company field (as per our mapping in server.ts)
-    const boardId = job.company; 
 
     try {
         const res = await axios.post('/api/greenhouse/deep-analyze', {
-            boardId,
-            jobId: job.id,
+            content: job.content,
             searchGoal: boardData.value.goal,
             model: selectedModel.value,
             baseUrl: aiBaseUrl.value
@@ -213,6 +211,21 @@ const handleDeepFind = async (job: any) => {
             score: 0,
             reasons: ["Failed to retrieve deep analysis."]
         };
+    }
+};
+
+const handleReloadSummary = async () => {
+    if (!analyzingJob.value || !analysisResult.value) return;
+    
+    try {
+        const res = await axios.post('/api/greenhouse/deep-summary', {
+            content: analyzingJob.value.content,
+            model: selectedModel.value,
+            baseUrl: aiBaseUrl.value
+        });
+        analysisResult.value.summary = res.data.summary;
+    } catch (err: any) {
+        console.error("Summary reload failed:", err);
     }
 };
 

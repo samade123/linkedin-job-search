@@ -4,7 +4,29 @@ import { cleanJobText } from "../utils";
 
 const BATCH_SIZE = 20;
 export const DEFAULT_AI_MODEL = "NexaAI/OmniNeural-4B";
-export const DEFAULT_BASE_URL = "http://127.0.0.1:18181/v1";
+export const DEFAULT_BASE_URL = "http://localhost:8001/v1";
+
+// ---------------------------------------------------------------------------
+// Global AI request queue.
+//
+// The local model is single-threaded. Concurrent requests do not run in
+// parallel — they interleave at the token level, producing garbage output
+// from both callers. Every axios call to the AI endpoint must go through
+// enqueue() so requests are serialised regardless of how many arrive
+// concurrently from the Express server.
+// ---------------------------------------------------------------------------
+let _aiQueue: Promise<unknown> = Promise.resolve();
+
+function enqueue<T>(fn: () => Promise<T>): Promise<T> {
+  const next = _aiQueue.then(fn, fn);
+  // Swallow rejections on the chain tail so a failed request does not
+  // prevent subsequent requests from running.
+  _aiQueue = next.then(
+    () => {},
+    () => {},
+  );
+  return next;
+}
 
 /**
  * Utility to strip markdown and extract JSON from AI responses reliably.
@@ -39,9 +61,8 @@ function cleanJsonString(content: string): string {
 
       // Heuristic fix for "index": 123 pattern often produced by some models
       if (cleaned.startsWith("[") && cleaned.includes('"index":')) {
-        cleaned = cleaned.replace(/"index":\s*(\d+)/g, "$1");
-        // Also remove potential extra braces if the model did [{"index": 1}] when we wanted [1]
-        cleaned = cleaned.replace(/\{\s*(\d+)\s*\}/g, "$1");
+        cleaned = cleaned.replace(/"index":\s*(\d+)/g, "\$1");
+        cleaned = cleaned.replace(/\{\s*(\d+)\s*\}/g, "\$1");
       }
 
       return cleaned;
@@ -53,6 +74,7 @@ function cleanJsonString(content: string): string {
 
 /**
  * Executes an AI request and attempts to fix the JSON if parsing fails.
+ * All HTTP calls are serialised through the global queue.
  */
 async function callAiWithJsonRetry<T>(
   model: string,
@@ -64,31 +86,34 @@ async function callAiWithJsonRetry<T>(
   try {
     const endpoint = `${baseUrl.replace(/\/$/, "")}/chat/completions`;
     const payloadWithModel = { ...initialPayload, model };
-    const response = await axios.post(endpoint, payloadWithModel, {
-      headers: { "Content-Type": "application/json" },
-      timeout: 15000, // 15s safety timeout for filtering/goal
-    });
+
+    const response = await enqueue(() =>
+      axios.post(endpoint, payloadWithModel, {
+        headers: { "Content-Type": "application/json" },
+        timeout: 60000,
+      }),
+    );
 
     if (response.status !== 200) return null;
 
     const content = response.data.choices[0].message.content.trim();
-    console.log(`🤖 AI Response [${schemaDescription}]: ${content}`);
+    console.log(`[AI] Response [${schemaDescription}]: ${content}`);
     const cleaned = cleanJsonString(content);
-    console.log(`🧹 Cleaned Response [${schemaDescription}]: ${cleaned}`);
+    console.log(`[CLEAN] Response [${schemaDescription}]: ${cleaned}`);
 
     try {
       return JSON.parse(cleaned) as T;
     } catch (parseError) {
       if (isRetry) {
-        console.error(`❌ AI failed to provide valid JSON even after retry: ${cleaned}`);
+        console.error(`[ERROR] AI failed to provide valid JSON even after retry: ${cleaned}`);
         return null;
       }
 
-      console.warn(`⚠️ AI provided malformed JSON. Attempting self-correction for ${schemaDescription}...`);
+      console.warn(`[WARN] AI provided malformed JSON. Attempting self-correction for ${schemaDescription}...`);
 
       const retryPayload = {
         ...initialPayload,
-        model, // Ensure model is passed
+        model,
         messages: [
           ...initialPayload.messages,
           { role: "assistant", content: content },
@@ -102,7 +127,7 @@ async function callAiWithJsonRetry<T>(
       return callAiWithJsonRetry<T>(model, baseUrl, retryPayload, schemaDescription, true);
     }
   } catch (err: any) {
-    console.error(`❌ AI Request Error: ${err.message}`);
+    console.error(`[ERROR] AI Request Error: ${err.message}`);
     return null;
   }
 }
@@ -276,8 +301,8 @@ Example: [1, 3]`,
               content: vettingPromptContent,
             },
           ],
-          temperature: 0.0,
-          max_tokens: 1500,
+          temperature: 0.1,
+          max_tokens: 750,
         };
 
         const vettedIndices = await callAiWithJsonRetry<number[]>(model, baseUrl, vettingPayload, "JSON array of vetted indices");
@@ -291,7 +316,7 @@ Example: [1, 3]`,
     }
   } catch (err: any) {
     aiErrorMessage = `AI Filtering Error: ${err.message}`;
-    console.error(`❌ ${aiErrorMessage}`);
+    console.error(`[ERROR] ${aiErrorMessage}`);
   }
 
   return { filteredJobs: aiFilteredJobs, errorMessage: aiErrorMessage };
@@ -299,7 +324,6 @@ Example: [1, 3]`,
 
 /**
  * Rapidly optimizes a search keyword by expanding it into semantically related professional terms.
- * This is used BEFORE the LinkedIn search to fetch a more relevant initial dataset.
  */
 export async function optimizeSearchKeywords(
   keyword: string,
@@ -310,7 +334,8 @@ export async function optimizeSearchKeywords(
     messages: [
       {
         role: "system",
-        content: "Fix typos in the user's keyword and expand to 3-4 professional search terms across any relevant industry. Space-separated only. No extra text.",
+        content:
+          "Fix typos in the user's keyword and expand to 3-4 professional search terms across any relevant industry. Space-separated only. No extra text.",
       },
       {
         role: "user",
@@ -324,13 +349,14 @@ export async function optimizeSearchKeywords(
   const endpoint = `${baseUrl.replace(/\/$/, "")}/chat/completions`;
   const payloadWithModel = { ...payload, model };
 
-  // Micro-retry loop (2 attempts)
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
-      const response = await axios.post(endpoint, payloadWithModel, {
-        headers: { "Content-Type": "application/json" },
-        timeout: 4500, // 4.5s aggressive timeout per attempt
-      });
+      const response = await enqueue(() =>
+        axios.post(endpoint, payloadWithModel, {
+          headers: { "Content-Type": "application/json" },
+          timeout: 4500,
+        }),
+      );
 
       const content = response.data.choices[0]?.message?.content?.trim();
       if (content) {
@@ -342,15 +368,23 @@ export async function optimizeSearchKeywords(
       }
     } catch (err: any) {
       if (attempt === 2) {
-        console.warn(`⚠️ Keyword Optimization Failed after 2 attempts: ${err.message}`);
+        console.warn(`[WARN] Keyword Optimization Failed after 2 attempts: ${err.message}`);
       } else {
-        console.log(`🔄 Retrying Keyword Optimization (Attempt ${attempt + 1})...`);
+        console.log(`[RETRY] Retrying Keyword Optimization (Attempt ${attempt + 1})...`);
       }
     }
   }
 
-  return keyword; // Full fallback
+  return keyword;
 }
+
+// Simple in-memory cache for country normalization to prevent duplicate AI calls.
+const countryCache: Record<string, string> = {};
+
+// Per-key in-flight promise deduplication.
+// If two requests normalise the same country simultaneously, the second
+// attaches to the first's promise instead of firing a second AI call.
+const countryInflight: Record<string, Promise<string>> = {};
 
 /**
  * Normalizes a country name using AI to ensure formal spelling and formatting.
@@ -360,43 +394,101 @@ export async function normalizeCountry(
   model: string = DEFAULT_AI_MODEL,
   baseUrl: string = DEFAULT_BASE_URL,
 ): Promise<string> {
-  if (!country || country.toLowerCase() === "global" || country.toLowerCase() === "any") {
+  const safeCountry = String(country || "").trim();
+  if (!safeCountry || safeCountry.toLowerCase() === "global" || safeCountry.toLowerCase() === "any") {
     return "Global";
   }
 
-  const payload = {
+  if (countryCache[safeCountry]) {
+    console.log(`[NORM] AI Normalization Cache Hit: "${safeCountry}" -> "${countryCache[safeCountry]}"`);
+    return countryCache[safeCountry];
+  }
+
+  // If a request for this key is already in-flight, reuse it.
+  if ( await countryInflight[safeCountry]) {
+    console.log(`[NORM] Deduplicating in-flight request for "${safeCountry}"`);
+    return countryInflight[safeCountry];
+  }
+
+  const safeBaseUrl = String(baseUrl || DEFAULT_BASE_URL).replace(/\/$/, "");
+  const endpoint = `${safeBaseUrl}/chat/completions`;
+  const safeModel = String(model || DEFAULT_AI_MODEL);
+
+  console.log(`[NORM] AI Normalizing: "${safeCountry}" | Model: ${safeModel} | API: ${endpoint}`);
+
+  const requestPayload = {
     messages: [
       {
         role: "system",
-        content: "You are a geographic data specialist. Normalize the provided country name into its formal, standard English name (e.g., 'the states' -> 'United States', 'uk' -> 'United Kingdom'). If the input is already formal, return it as is. If it's not a recognized country, return the input. Return ONLY the formal name, no extra text.",
+        content: "Return ONLY the formal English name of the country provided. No commentary.",
       },
       {
         role: "user",
-        content: `Country: ${country}`,
+        content: safeCountry,
       },
     ],
-    temperature: 0.1,
-    max_tokens: 32,
+    temperature: 0,
+    max_tokens: 20,
+    model: safeModel,
   };
 
-  const endpoint = `${baseUrl.replace(/\/$/, "")}/chat/completions`;
-  const payloadWithModel = { ...payload, model };
-
-  try {
-    const response = await axios.post(endpoint, payloadWithModel, {
+  const promise = enqueue(() =>
+    axios.post(endpoint, requestPayload, {
       headers: { "Content-Type": "application/json" },
-      timeout: 5000,
+      timeout: 8000,
+    }),
+  )
+    .then((response) => {
+      const content = response.data.choices[0]?.message?.content?.trim();
+      if (content) {
+        const formalized = content.replace(/^["']|["']$|\.$/g, "").trim();
+        countryCache[safeCountry] = formalized;
+        console.log(`[NORM] AI Normalization result: "${safeCountry}" -> "${formalized}"`);
+        return formalized;
+      }
+      return safeCountry;
+    })
+    .catch((err: any) => {
+      console.error(`[WARN] Country Normalization Failed: ${err.message} (URL: ${endpoint})`);
+      return safeCountry;
+    })
+    .finally(() => {
+      delete countryInflight[safeCountry];
     });
 
-    const content = response.data.choices[0]?.message?.content?.trim();
-    if (content) {
-      return content.replace(/[,\.]/g, "").trim();
-    }
-  } catch (err: any) {
-    console.warn(`⚠️ Country Normalization Failed: ${err.message}`);
+  countryInflight[safeCountry] = promise;
+  return promise;
+}
+
+/**
+ * Extracts key functional sections from a job description and thins out boilerplate.
+ */
+function thinJobContent(text: string): string {
+  if (!text) return "";
+
+  let clean = text.replace(/\s+/g, " ").trim();
+
+  const patterns = [
+    /responsibilit\w+/i,
+    /requirement\w+/i,
+    /qualification\w+/i,
+    /skills?/i,
+    /about the role/i,
+    /what you\w+ do/i,
+    /what we\w+ looking for/i,
+  ];
+
+  let matches: string[] = [];
+  patterns.forEach((p) => {
+    const match = clean.match(new RegExp(`${p.source}[\\s\\S]{1,1500}`, "i"));
+    if (match) matches.push(match[0]);
+  });
+
+  if (matches.length === 0) {
+    return clean.substring(0, 3000);
   }
 
-  return country;
+  return matches.join("\n\n---\n\n").substring(0, 4000);
 }
 
 /**
@@ -407,32 +499,41 @@ export async function summarizeJobRole(
   model: string = DEFAULT_AI_MODEL,
   baseUrl: string = DEFAULT_BASE_URL,
 ): Promise<string> {
+  const safeBaseUrl = String(baseUrl || DEFAULT_BASE_URL).replace(/\/$/, "");
+  const endpoint = `${safeBaseUrl}/chat/completions`;
+  const safeModel = String(model || DEFAULT_AI_MODEL);
+  const safeDescription = thinJobContent(description);
+
+  console.log(`[AI] Summarizing Role... (Model: ${safeModel}, Length: ${safeDescription.length})`);
+
   const payload = {
+    model: safeModel,
     messages: [
       {
         role: "system",
-        content: "You are an expert technical recruiter. Summarize the provided job description into a high-impact, professional summary of exactly 2-3 sentences focusing on the primary responsibilities and the core value the role brings. No fluff. No extra text.",
+        content:
+          "You are an expert technical recruiter. Summarize the provided job description into a high-impact, professional summary of exactly 2-3 sentences focusing on primary responsibilities. No fluff.",
       },
       {
         role: "user",
-        content: `Job Description (HTML removed): ${description.substring(0, 8000)}`,
+        content: `Job Description: ${safeDescription}`,
       },
     ],
     temperature: 0.1,
     max_tokens: 250,
   };
 
-  const endpoint = `${baseUrl.replace(/\/$/, "")}/chat/completions`;
-  const payloadWithModel = { ...payload, model };
-
   try {
-    const response = await axios.post(endpoint, payloadWithModel, {
-      headers: { "Content-Type": "application/json" },
-      timeout: 10000,
-    });
-    return response.data.choices[0]?.message?.content?.trim() || "Summary unavailable.";
+    const response = await enqueue(() =>
+      axios.post(endpoint, payload, {
+        headers: { "Content-Type": "application/json" },
+        timeout: 60000,
+      }),
+    );
+    const result = response.data.choices?.[0]?.message?.content?.trim();
+    return result || "Summary unavailable.";
   } catch (err: any) {
-    console.warn(`⚠️ Summarization Failed: ${err.message}`);
+    console.error(`[WARN] Summarization Failed: ${err.message} (URL: ${endpoint})`);
     return "Failed to generate summary.";
   }
 }
@@ -446,46 +547,311 @@ export async function rateJobCompatibility(
   model: string = DEFAULT_AI_MODEL,
   baseUrl: string = DEFAULT_BASE_URL,
 ): Promise<{ score: number; reasons: string[] }> {
+  const safeBaseUrl = String(baseUrl || DEFAULT_BASE_URL).replace(/\/$/, "");
+  const endpoint = `${safeBaseUrl}/chat/completions`;
+  const safeModel = String(model || DEFAULT_AI_MODEL);
+  const safeDescription = thinJobContent(description);
+
+  console.log(`[AI] Rating Compatibility... (Model: ${safeModel}, Length: ${safeDescription.length})`);
+
   const payload = {
+    model: safeModel,
     messages: [
       {
         role: "system",
-        content: `You are a career matching engine. Compare the job description with the user's search intent. Output ONLY a valid JSON object.
+        content: `Compare the job description with the user's search intent. Output ONLY a valid JSON object.
  
 Intent: "${searchGoal.summary}"
-Target Roles: ${searchGoal.titles.join(", ")}
  
 Format:
 {
   "score": integer (0-100),
-  "reasons": ["3-4 bulleted reasons explaining the score focusing on skills, location, and seniority alignment"]
+  "reasons": ["3-4 bulleted reasons focusing on skills and seniority"]
 }`,
       },
       {
         role: "user",
-        content: `Job Description: ${description.substring(0, 8000)}`,
+        content: `Job Description: ${safeDescription}`,
       },
     ],
     temperature: 0.1,
-    max_tokens: 500,
+    max_tokens: 250,
   };
 
-  const endpoint = `${baseUrl.replace(/\/$/, "")}/chat/completions`;
-  const payloadWithModel = { ...payload, model };
-
   try {
-    const response = await axios.post(endpoint, payloadWithModel, {
-      headers: { "Content-Type": "application/json" },
-      timeout: 10000,
-    });
-    const content = response.data.choices[0]?.message?.content?.trim();
+    const response = await enqueue(() =>
+      axios.post(endpoint, payload, {
+        headers: { "Content-Type": "application/json" },
+        timeout: 60000,
+      }),
+    );
+    const content = response.data.choices?.[0]?.message?.content?.trim();
+    if (!content) throw new Error("Empty AI response");
+
     const parsed = JSON.parse(cleanJsonString(content));
     return {
-      score: typeof parsed.score === 'number' ? parsed.score : 0,
-      reasons: Array.isArray(parsed.reasons) ? parsed.reasons : ["Analysis inconclusive."]
+      score: typeof parsed.score === "number" ? parsed.score : 0,
+      reasons: Array.isArray(parsed.reasons) ? parsed.reasons : ["Analysis inconclusive."],
     };
   } catch (err: any) {
-    console.warn(`⚠️ Compatibility Rating Failed: ${err.message}`);
+    console.error(`[WARN] Compatibility Rating Failed: ${err.message} (URL: ${endpoint})`);
     return { score: 0, reasons: ["Failed to calculate compatibility."] };
+  }
+}
+
+/**
+ * Extracts benefits and company culture insights from a job description.
+ */
+export async function analyzeJobCultureAndBenefits(
+  description: string,
+  model: string = DEFAULT_AI_MODEL,
+  baseUrl: string = DEFAULT_BASE_URL,
+): Promise<string> {
+  const safeBaseUrl = String(baseUrl || DEFAULT_BASE_URL).replace(/\/$/, "");
+  const endpoint = `${safeBaseUrl}/chat/completions`;
+  const safeModel = String(model || DEFAULT_AI_MODEL);
+  const safeDescription = thinJobContent(description);
+
+  console.log(`[AI] Analyzing Culture & Benefits... (Model: ${safeModel})`);
+
+  const payload = {
+    model: safeModel,
+    messages: [
+      {
+        role: "system",
+        content:
+          "You are a workplace culture analyst. Identify the benefits (perks, flexible work, etc.) and the company culture mentioned or implied in the job description. Use **bold** for key perks and *italics* for cultural keywords. 2-3 sentences only.",
+      },
+      {
+        role: "user",
+        content: `Job Description: ${safeDescription}`,
+      },
+    ],
+    temperature: 0.2,
+    max_tokens: 300,
+  };
+
+  try {
+    const response = await enqueue(() =>
+      axios.post(endpoint, payload, {
+        headers: { "Content-Type": "application/json" },
+        timeout: 60000,
+      }),
+    );
+    return response.data.choices?.[0]?.message?.content?.trim() || "Culture/Benefits data unavailable.";
+  } catch (err: any) {
+    console.error(`[WARN] Culture/Benefits Analysis Failed: ${err.message}`);
+    return "Failed to analyze culture and benefits.";
+  }
+}
+
+/**
+ * Provides a strategic Pros & Cons breakdown of a job role.
+ */
+export async function analyzeJobProsAndCons(
+  description: string,
+  model: string = DEFAULT_AI_MODEL,
+  baseUrl: string = DEFAULT_BASE_URL,
+): Promise<{ pros: string[]; cons: string[] }> {
+  const safeBaseUrl = String(baseUrl || DEFAULT_BASE_URL).replace(/\/$/, "");
+  const endpoint = `${safeBaseUrl}/chat/completions`;
+  const safeModel = String(model || DEFAULT_AI_MODEL);
+  const safeDescription = thinJobContent(description);
+
+  console.log(`[AI] Analyzing Pros & Cons... (Model: ${safeModel})`);
+
+  const payload = {
+    model: safeModel,
+    messages: [
+      {
+        role: "system",
+        content: `Identify strategic Pros and Cons for the role. Output a valid JSON object. Use **bold** for high-impact keywords.
+        
+Format:
+{
+  "pros": ["2-3 specific advantages"],
+  "cons": ["2-3 objective challenges or drawbacks"]
+}`,
+      },
+      {
+        role: "user",
+        content: `Job Description: ${safeDescription}`,
+      },
+    ],
+    temperature: 0.1,
+    max_tokens: 250,
+  };
+
+  try {
+    const response = await enqueue(() =>
+      axios.post(endpoint, payload, {
+        headers: { "Content-Type": "application/json" },
+        timeout: 60000,
+      }),
+    );
+    const content = response.data.choices?.[0]?.message?.content?.trim();
+    if (!content) throw new Error("Empty AI response");
+
+    const parsed = JSON.parse(cleanJsonString(content));
+    return {
+      pros: Array.isArray(parsed.pros) ? parsed.pros : ["Analysis inconclusive."],
+      cons: Array.isArray(parsed.cons) ? parsed.cons : ["Analysis inconclusive."],
+    };
+  } catch (err: any) {
+    console.error(`[WARN] Pros/Cons Analysis Failed: ${err.message}`);
+    return { pros: ["Failed to analyze pros."], cons: ["Failed to analyze cons."] };
+  }
+}
+
+/**
+ * Extracts significant direct quotes from a job description.
+ */
+export async function extractJobQuotes(
+  description: string,
+  model: string = DEFAULT_AI_MODEL,
+  baseUrl: string = DEFAULT_BASE_URL,
+): Promise<string[]> {
+  const safeBaseUrl = String(baseUrl || DEFAULT_BASE_URL).replace(/\/$/, "");
+  const endpoint = `${safeBaseUrl}/chat/completions`;
+  const safeModel = String(model || DEFAULT_AI_MODEL);
+  const safeDescription = thinJobContent(description);
+
+  console.log(`[AI] Extracting Key Quotes... (Model: ${safeModel})`);
+
+  const payload = {
+    model: safeModel,
+    messages: [
+      {
+        role: "system",
+        content: `Identify the 3 most significant or telling direct quotes from the job description that characterize the role's essence, seniority, or unique challenges. 
+        Return ONLY a valid JSON array of strings. Do not include any text outside the JSON array.
+        
+Example: ["Quote 1", "Quote 2", "Quote 3"]`,
+      },
+      {
+        role: "user",
+        content: `Job Description: ${safeDescription}`,
+      },
+    ],
+    temperature: 0.1,
+    max_tokens: 250,
+  };
+
+  try {
+    const response = await enqueue(() =>
+      axios.post(endpoint, payload, {
+        headers: { "Content-Type": "application/json" },
+        timeout: 60000,
+      }),
+    );
+    const content = response.data.choices?.[0]?.message?.content?.trim();
+    if (!content) throw new Error("Empty AI response");
+
+    const parsed = JSON.parse(cleanJsonString(content));
+    return Array.isArray(parsed) ? parsed : ["Analysis inconclusive."];
+  } catch (err: any) {
+    console.error(`[WARN] Quotes Extraction Failed: ${err.message}`);
+    return ["Failed to extract quotes."];
+  }
+}
+
+/**
+ * Runs a performance diagnostic on the AI model.
+ */
+export async function runAiDiagnostics(
+  model: string = DEFAULT_AI_MODEL,
+  baseUrl: string = DEFAULT_BASE_URL,
+): Promise<{
+  totalAttempts: number;
+  latencies: number[];
+  healthSummary: string;
+  status: "optimal" | "degraded" | "offline";
+}> {
+  const safeBaseUrl = String(baseUrl || DEFAULT_BASE_URL).replace(/\/$/, "");
+  const endpoint = `${safeBaseUrl}/chat/completions`;
+  const latencies: number[] = [];
+  let totalAttempts = 0;
+  let successResponse = "";
+
+  console.log(`[AI] Starting Diagnostics Pulse for ${model}...`);
+
+  for (let i = 1; i <= 5; i++) {
+    totalAttempts = i;
+    const start = Date.now();
+    try {
+      const response = await enqueue(() =>
+        axios.post(
+          endpoint,
+          {
+            model,
+            messages: [{ role: "user", content: "ping" }],
+            max_tokens: 5,
+            temperature: 0,
+          },
+          {
+            headers: { "Content-Type": "application/json" },
+            timeout: 8000,
+          },
+        ),
+      );
+
+      if (response.status === 200) {
+        latencies.push(Date.now() - start);
+        successResponse = response.data.choices?.[0]?.message?.content || "pong";
+        break;
+      }
+    } catch (err: any) {
+      console.warn(`[AI] Probe Attempt ${i} failed: ${err.message}`);
+      latencies.push(-1);
+      if (i === 5) {
+        return { totalAttempts, latencies, healthSummary: "Connection timed out after 5 attempts.", status: "offline" };
+      }
+    }
+  }
+
+  try {
+    const validLatencies = latencies.filter((l) => l > 0);
+    const avgLatencey = validLatencies.length
+      ? Math.round(validLatencies.reduce((a, b) => a + b, 0) / validLatencies.length)
+      : 0;
+
+    const summaryPayload = {
+      model,
+      messages: [
+        {
+          role: "system",
+          content:
+            "You are a system health agent. Analyze the provided latency data and attempt count. Summarize the model's performance in one professional sentence. Use bullet points or technical jargon if appropriate. No fluff.",
+        },
+        {
+          role: "user",
+          content: `Inference Probe Stats: Attempts: ${totalAttempts}, Avg Latency: ${avgLatencey}ms. Status: Success at attempt ${totalAttempts}.`,
+        },
+      ],
+      max_tokens: 100,
+      temperature: 0.2,
+    };
+
+    const summaryRes = await enqueue(() =>
+      axios.post(endpoint, summaryPayload, {
+        headers: { "Content-Type": "application/json" },
+        timeout: 15000,
+      }),
+    );
+
+    const healthSummary = summaryRes.data.choices?.[0]?.message?.content?.trim() || "Analysis unavailable.";
+    return {
+      totalAttempts,
+      latencies,
+      healthSummary,
+      status: avgLatencey < 1500 ? "optimal" : "degraded",
+    };
+  } catch (err: any) {
+    return {
+      totalAttempts,
+      latencies,
+      healthSummary: "Probe succeeded but self-diagnostic summary failed.",
+      status: "degraded",
+    };
   }
 }
