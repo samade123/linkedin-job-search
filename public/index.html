@@ -171,7 +171,14 @@
                     </h3>
                     <form id="addBoardForm" class="space-y-4">
                         <div class="space-y-1.5">
-                            <label class="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Greenhouse Board ID</label>
+                            <label class="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Platform</label>
+                            <select id="boardPlatformSelect" class="w-full bg-slate-50 border border-slate-200 rounded-lg px-4 py-2 text-sm focus:ring-1 focus:ring-slate-900 outline-none transition-all">
+                                <option value="greenhouse" selected>Greenhouse</option>
+                                <option value="ashby">Ashby</option>
+                            </select>
+                        </div>
+                        <div class="space-y-1.5">
+                            <label class="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Board ID (Subdomain)</label>
                             <input type="text" id="boardIdInput" placeholder="e.g. chaosindustries" required class="w-full bg-slate-50 border border-slate-200 rounded-lg px-4 py-2 text-sm focus:ring-1 focus:ring-slate-900 outline-none transition-all">
                         </div>
                         <button type="submit" class="w-full bg-slate-100 hover:bg-slate-200 text-slate-800 py-2.5 rounded-lg text-sm font-bold transition-all border border-slate-200">Add Board</button>
@@ -573,6 +580,12 @@
         const boardStrictModeContainer = document.getElementById('boardStrictModeContainer');
 
         let myBoards = JSON.parse(localStorage.getItem('myJobBoards') || '[]');
+        // Migration: convert old string array to object array
+        if (myBoards.length > 0 && typeof myBoards[0] === 'string') {
+            myBoards = myBoards.map(id => ({ id, type: 'greenhouse' }));
+            localStorage.setItem('myJobBoards', JSON.stringify(myBoards));
+        }
+
         let boardData = { allJobs: [], topPicks: [], goal: null, aiError: "" };
         let boardActiveTab = 'topPicks';
         let bIsStrictMode = true;
@@ -582,7 +595,7 @@
             if (myBoards.length === 0) {
                 boardSelect.innerHTML = '<option value="" disabled selected>No boards added</option>';
             } else {
-                boardSelect.innerHTML = myBoards.map(b => `<option value="${b}">${b}</option>`).join('');
+                boardSelect.innerHTML = myBoards.map((b, idx) => `<option value="${idx}">${b.id} (${b.type})</option>`).join('');
             }
         }
         renderBoardOptions();
@@ -610,8 +623,9 @@
         addBoardForm.onsubmit = (e) => {
             e.preventDefault();
             const newId = boardIdInput.value.trim().toLowerCase();
-            if (newId && !myBoards.includes(newId)) {
-                myBoards.push(newId);
+            const type = document.getElementById('boardPlatformSelect').value;
+            if (newId && !myBoards.find(b => b.id === newId && b.type === type)) {
+                myBoards.push({ id: newId, type });
                 localStorage.setItem('myJobBoards', JSON.stringify(myBoards));
                 renderBoardOptions();
             }
@@ -703,14 +717,17 @@
 
         searchBoardForm.onsubmit = async (e) => {
             e.preventDefault();
-            const boardId = boardSelect.value;
+            const boardIdx = boardSelect.value;
+            const selectedBoard = myBoards[boardIdx];
+            if (!selectedBoard) return;
+
+            const { id: boardId, type } = selectedBoard;
             const keyword = boardKeyword.value;
-            if (!boardId) return;
 
             btnSearchBoard.disabled = true;
             boardStatusBox.classList.remove('hidden');
             boardSearchGoal.classList.add('hidden');
-            boardStatusText.innerText = `Fetching ${boardId} job board...`;
+            boardStatusText.innerText = `Fetching ${boardId} job board on ${type}...`;
             boardResultsBody.innerHTML = `<tr><td colspan="4" class="px-6 py-12 text-center"><div class="loading-shimmer h-4 w-64 mx-auto rounded"></div></td></tr>`;
 
             const payload = { boardId, keyword, model: selectedModel, baseUrl: aiBaseUrl };
@@ -725,8 +742,8 @@
                     boardStatusText.innerText = "Analyzing target role intent...";
                 }).catch(err => console.warn(err));
 
-            // Wait a small bit in case goal generation is instant, then search
-            axios.post('/api/greenhouse/search', payload)
+            // Execute search based on platform type
+            axios.post(`/api/${type}/search`, payload)
                 .then(res => {
                     boardStatusText.innerText = "Processing matches...";
                     boardData = { ...res.data, goal: reqGoal };

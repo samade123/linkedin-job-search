@@ -220,17 +220,18 @@ Rules:
 }
 
 /**
- * Generates a structured JSON summary specifically tailored for Greenhouse
- * Job Boards.
+ * Generates a structured JSON summary specifically tailored for Company Job Boards
+ * (Greenhouse, Ashby, etc.).
  */
-export async function generateGreenhouseJobGoal(
+export async function generateCompanyJobGoal(
   keyword: string,
+  platform: string = "Greenhouse",
   targetCountry: string = "Any",
   model: string = DEFAULT_AI_MODEL,
   baseUrl: string = DEFAULT_AI_BASE_URL,
 ): Promise<SearchGoal> {
   const fallbackGoal: SearchGoal = {
-    summary: `Searching for ${keyword}${targetCountry ? ` in ${targetCountry}` : ""}.`,
+    summary: `Searching for ${keyword}${targetCountry ? ` in ${targetCountry}` : ""} on ${platform}.`,
     titles: [keyword],
     relatedTitles: [],
   };
@@ -241,7 +242,7 @@ export async function generateGreenhouseJobGoal(
         {
           role: "system",
           // BUG 8 FIX — concrete inline array examples.
-          content: `You are a specialist recruiter focusing on company-specific job boards (Greenhouse).
+          content: `You are a specialist recruiter focusing on company-specific job boards (${platform}).
 Summarize the user's intent for searching a SPECIFIC company's openings.
 
 Strict JSON format — output ONLY this object, no markdown, no code fences:
@@ -255,12 +256,12 @@ Rules:
 1. "titles" must be a flat JSON array of plain strings — no objects, no nested keys, no single quotes.
 2. "relatedTitles" must also be a flat JSON array of plain strings with at least 8 items.
 3. Do NOT use markdown, asterisks, or bold inside any string value.
-4. Corporate Context: frame the summary as a targeted search within a single company's ecosystem.
+4. Corporate Context: frame the summary as a targeted search within a single company's ecosystem on ${platform}.
 5. Output ONLY the raw JSON object — no text before or after it.`,
         },
         {
           role: "user",
-          content: `Generate a search goal for this Greenhouse board search:
+          content: `Generate a search goal for this ${platform} board search:
 - Target Keywords: ${keyword}
 - Target Country: ${targetCountry}`,
         },
@@ -269,7 +270,7 @@ Rules:
       max_tokens: 500,
     };
 
-    const parsed = await callAiWithJsonRetry<SearchGoal>(model, baseUrl, payload, "Greenhouse SearchGoal JSON");
+    const parsed = await callAiWithJsonRetry<SearchGoal>(model, baseUrl, payload, `${platform} SearchGoal JSON`);
 
     // BUG 10 FIX — same non-empty validation as generateJobDescription.
     if (
@@ -282,7 +283,7 @@ Rules:
       return parsed;
     }
   } catch (error) {
-    console.warn("Unexpected error in generateGreenhouseJobGoal:", error);
+    console.warn(`Unexpected error in generateCompanyJobGoal (${platform}):`, error);
   }
   return fallbackGoal;
 }

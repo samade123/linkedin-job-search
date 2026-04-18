@@ -128,7 +128,7 @@ const analysisResult = ref<any>(null);
 const isReloadingGoal = ref(false);
 
 // LinkedIn State
-const linkedinData = ref({ allJobs: [] as any[], topPicks: [] as any[], goal: null, aiError: "" });
+const linkedinData = ref({ allJobs: [] as any[], topPicks: [] as any[], goal: null as any, aiError: "" });
 const linkedinActiveResultsTab = ref('topPicks');
 const linkedinStrictMode = ref(true);
 
@@ -140,7 +140,7 @@ const linkedinJobs = computed(() => {
 });
 
 // Board State
-const boardData = ref({ allJobs: [] as any[], topPicks: [] as any[], goal: null, aiError: "" });
+const boardData = ref({ allJobs: [] as any[], topPicks: [] as any[], goal: null as any, aiError: "" });
 const boardActiveResultsTab = ref('topPicks');
 const boardStrictMode = ref(true);
 
@@ -187,7 +187,8 @@ const executeBoardSearch = async (formPayload: any, updateStatus: (loading: bool
         }).catch(err => console.warn(err));
 
     try {
-        const res = await axios.post('/api/greenhouse/search', payload);
+        const endpoint = `/api/${formPayload.type || 'greenhouse'}/search`;
+        const res = await axios.post(endpoint, payload);
         boardData.value = { ...boardData.value, ...res.data };
     } catch(err) {
         boardData.value.aiError = "Board search failed.";
@@ -320,6 +321,8 @@ const handleReloadGoal = async () => {
         
         const res = await axios.post('/api/ai/goal/refresh', {
             ...payload,
+            isGreenhouse: !isLinkedIn && boardData.value.goal?.summary?.toLowerCase().includes('greenhouse'),
+            isAshby: !isLinkedIn && boardData.value.goal?.summary?.toLowerCase().includes('ashby'),
             keyword: isLinkedIn ? (dataObj.goal as any)?.titles?.[0] || "" : (dataObj.goal as any)?.titles?.[0] || "",
             targetCountry: "Any" // Default
         });
