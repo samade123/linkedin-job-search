@@ -1,4 +1,3 @@
-// server.ts
 import express, { Request, Response } from "express";
 import path from "path";
 import axios from "axios";
@@ -57,13 +56,16 @@ app.get("/api/models", async (req: Request, res: Response) => {
     res.json(response.data);
   } catch (error: any) {
     console.warn("Failed to fetch models from local AI server:", error.message);
-    // Return a safe fallback list if the server is offline or doesn't support the endpoint
-    res.json({ data: [{ id: "NexaAI/OmniNeural-4B" }, { id: "NexaAI/Llama3.2-3B-NPU-Turbo" }] });
+    // Return a safe fallback list if the server is offline or does not
+    // support the /models endpoint.
+    res.json({
+      data: [{ id: "NexaAI/OmniNeural-4B" }, { id: "NexaAI/Llama3.2-3B-NPU-Turbo" }],
+    });
   }
 });
 
 /**
- * Endpoint for AI Search Goal generation (Fast response).
+ * Endpoint for AI Search Goal generation (fast response).
  */
 app.post("/api/goal", async (req: Request, res: Response) => {
   try {
@@ -72,7 +74,11 @@ app.post("/api/goal", async (req: Request, res: Response) => {
     if (targetCountry) {
       normalizedCountry = await normalizeCountry(targetCountry, model, baseUrl);
     }
-    const queryOptions = { ...getEffectiveQueryOptions(), ...clientOptions, targetCountry: normalizedCountry };
+    const queryOptions = {
+      ...getEffectiveQueryOptions(),
+      ...clientOptions,
+      targetCountry: normalizedCountry,
+    };
     const searchGoal = await generateJobDescription(queryOptions, model, baseUrl);
     res.json(searchGoal);
   } catch (error: any) {
@@ -90,12 +96,16 @@ app.post("/api/search", async (req: Request, res: Response) => {
     if (targetCountry) {
       normalizedCountry = await normalizeCountry(targetCountry, model, baseUrl);
     }
-    const queryOptions = { ...getEffectiveQueryOptions(), ...clientOptions, targetCountry: normalizedCountry };
+    const queryOptions = {
+      ...getEffectiveQueryOptions(),
+      ...clientOptions,
+      targetCountry: normalizedCountry,
+    };
 
     console.log(`[START] API Search: "${queryOptions.keyword}" (${queryOptions.location || "Global"})`);
 
     // 1. AI Keyword Optimization Stage
-    let originalKeyword = queryOptions.keyword;
+    const originalKeyword = queryOptions.keyword;
     console.time("[TIME] AI Keyword Optimization");
     try {
       const optimized = await optimizeSearchKeywords(originalKeyword, model, baseUrl);
@@ -104,6 +114,8 @@ app.post("/api/search", async (req: Request, res: Response) => {
         queryOptions.keyword = optimized;
       }
     } catch (optError: any) {
+      // BUG 1 FIX — optimizeSearchKeywords now throws on failure.
+      // Catch it here so the search continues with the original keyword.
       console.warn(`[WARN] Keyword Optimization Failed: ${optError.message}`);
     }
     console.timeEnd("[TIME] AI Keyword Optimization");
@@ -148,11 +160,7 @@ app.post("/api/search", async (req: Request, res: Response) => {
     }
 
     console.log(`[COMPLETE] Search finished. Top Picks: ${topPicks.length}`);
-    res.json({
-      allJobs,
-      topPicks,
-      aiError: aiErrorMessage,
-    });
+    res.json({ allJobs, topPicks, aiError: aiErrorMessage });
   } catch (error: any) {
     console.error("API Search Error:", error);
     res.status(500).json({ error: error.message });
@@ -167,14 +175,14 @@ app.post("/api/greenhouse/search", async (req: Request, res: Response) => {
     const { boardId, keyword, model, baseUrl, goal } = req.body;
     console.log(`[START] API Greenhouse Search: "${keyword}" on board "${boardId}"`);
 
-    // Fetch from greenhouse
+    // Fetch from Greenhouse
     console.time("[TIME] Greenhouse Job Crawl");
     let allJobs: Job[] = [];
     try {
       const gRes = await axios.get(`https://boards-api.greenhouse.io/v1/boards/${boardId}/jobs?content=true`);
       const rawJobs = gRes.data.jobs || [];
 
-      const formatTimeAgo = (dateStr: string) => {
+      const formatTimeAgo = (dateStr: string): string => {
         const date = new Date(dateStr);
         const diffMs = Date.now() - date.getTime();
         const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
@@ -226,11 +234,7 @@ app.post("/api/greenhouse/search", async (req: Request, res: Response) => {
     }
 
     console.log(`[COMPLETE] Greenhouse Search finished. Top Picks: ${topPicks.length}`);
-    res.json({
-      allJobs,
-      topPicks,
-      aiError: aiErrorMessage,
-    });
+    res.json({ allJobs, topPicks, aiError: aiErrorMessage });
   } catch (error: any) {
     console.error("API Greenhouse Search Error:", error);
     res.status(500).json({ error: error.message });
@@ -250,24 +254,14 @@ app.post("/api/greenhouse/deep-analyze", async (req: Request, res: Response) => 
       return res.status(400).json({ error: "Job content is missing." });
     }
 
-    // Robust HTML decoding and tag stripping
     const cleanContent = cleanJobText(content);
 
     console.time("[TIME] AI Deep Analysis (Sequential)");
 
-    // Pass 1: Summarize
     const summary = await summarizeJobRole(cleanContent, model, baseUrl);
-
-    // Pass 2: Rate
     const rating = await rateJobCompatibility(cleanContent, searchGoal, model, baseUrl);
-
-    // Pass 3: Culture & Benefits
     const cultureBenefits = await analyzeJobCultureAndBenefits(cleanContent, model, baseUrl);
-
-    // Pass 4: Pros & Cons
     const prosCons = await analyzeJobProsAndCons(cleanContent, model, baseUrl);
-
-    // Pass 5: Direct Quotes
     const quotes = await extractJobQuotes(cleanContent, model, baseUrl);
 
     console.timeEnd("[TIME] AI Deep Analysis (Sequential)");
@@ -279,7 +273,7 @@ app.post("/api/greenhouse/deep-analyze", async (req: Request, res: Response) => 
       culture: cultureBenefits,
       pros: prosCons.pros,
       cons: prosCons.cons,
-      quotes: quotes,
+      quotes,
     });
   } catch (error: any) {
     console.error("Deep Analyze Error:", error);
@@ -294,8 +288,6 @@ app.post("/api/greenhouse/deep-summary", async (req: Request, res: Response) => 
   try {
     const { content, model, baseUrl } = req.body;
     if (!content) return res.status(400).json({ error: "Job content is missing." });
-
-    // Robust HTML decoding and tag stripping
     const cleanContent = cleanJobText(content);
     console.log(`[AI] [RELOAD] Regenerating Executive Summary...`);
     const summary = await summarizeJobRole(cleanContent, model, baseUrl);
@@ -377,7 +369,12 @@ app.post("/api/ai/goal/refresh", async (req: Request, res: Response) => {
       return res.json(goal);
     }
 
-    const queryOptions = { ...getEffectiveQueryOptions(), ...clientOptions, keyword, targetCountry };
+    const queryOptions = {
+      ...getEffectiveQueryOptions(),
+      ...clientOptions,
+      keyword,
+      targetCountry,
+    };
     const goal = await generateJobDescription(queryOptions, model, baseUrl);
     res.json(goal);
   } catch (error: any) {
@@ -400,11 +397,11 @@ app.post("/api/ai/diagnostics", async (req: Request, res: Response) => {
 });
 
 /**
- * Health check endpoint
+ * Health check endpoint.
  */
-app.get("/health", (req, res) => res.send("Server is alive! [START]"));
+app.get("/health", (_req, res) => res.send("Server is alive! [START]"));
 
-// Serve the index.html for all non-API routes (SPA support)
+// Serve index.html for all non-API routes (SPA support).
 app.get("*", (req: Request, res: Response) => {
   const indexPath = path.join(PUBLIC_PATH, "index.html");
   console.log(`[PAGE] Serving index.html from: ${indexPath}`);
@@ -416,17 +413,23 @@ app.get("*", (req: Request, res: Response) => {
   });
 });
 
-// Start the server
+// ---------------------------------------------------------------------------
+// Start server
+// ---------------------------------------------------------------------------
 app.listen(PORT, async () => {
   console.log(`\n[SERVER] Server is running on http://localhost:${PORT}`);
   console.log(`[WEB] Dashboard: http://localhost:${PORT}\n`);
 
-  // Background warm-up
+  // BUG 1 FIX — warmup now awaits properly and gates [DONE] on actual
+  // success. optimizeSearchKeywords throws on failure, so the .catch()
+  // here is genuinely reachable and [DONE] only fires on a clean resolve.
   console.log("[WARMUP] Initializing AI Warm-up sequence...");
-  optimizeSearchKeywords("warmup", DEFAULT_AI_MODEL, DEFAULT_BASE_URL)
-    .then(() => console.log("[DONE] AI Model is warm and ready!"))
-    .catch((err) => console.warn("[WARN] Initial AI warm-up failed (Server may be offline)."));
+  try {
+    await optimizeSearchKeywords("warmup", DEFAULT_AI_MODEL, DEFAULT_BASE_URL);
+    console.log("[DONE] AI Model is warm and ready!");
+  } catch (err: any) {
+    console.warn("[WARN] Initial AI warm-up failed — model server may be offline.", err.message);
+  }
 
-  // Open browser to the UI
   open(`http://localhost:${PORT}`).catch((err) => console.error("Failed to open browser:", err));
 });
