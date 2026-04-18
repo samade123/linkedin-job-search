@@ -8,8 +8,20 @@ import open from "open";
 // Import modules
 import { Job } from "./src/types";
 import { getEffectiveQueryOptions } from "./src/args";
-import { filterJobsWithAI, generateJobDescription, optimizeSearchKeywords, normalizeCountry, summarizeJobRole, rateJobCompatibility, analyzeJobCultureAndBenefits, analyzeJobProsAndCons, extractJobQuotes, runAiDiagnostics, DEFAULT_AI_MODEL, DEFAULT_BASE_URL } from "./src/services/aiService";
-import { PORT } from "./src/config";
+import { 
+  filterJobsWithAI, 
+  generateJobDescription, 
+  generateGreenhouseJobGoal,
+  optimizeSearchKeywords, 
+  normalizeCountry, 
+  summarizeJobRole, 
+  rateJobCompatibility, 
+  analyzeJobCultureAndBenefits, 
+  analyzeJobProsAndCons, 
+  extractJobQuotes, 
+  runAiDiagnostics 
+} from "./src/services/aiService";
+import { PORT, DEFAULT_AI_MODEL, DEFAULT_AI_BASE_URL as DEFAULT_BASE_URL } from "./src/config";
 
 const app = express();
 
@@ -40,7 +52,8 @@ app.post("/api/warmup", async (req: Request, res: Response) => {
  */
 app.get("/api/models", async (req: Request, res: Response) => {
   try {
-    const response = await axios.get("http://localhost:8001/v1/models");
+    const modelsUrl = `${DEFAULT_BASE_URL.replace(/\/$/, "")}/models`;
+    const response = await axios.get(modelsUrl);
     // const response = await axios.get("http://127.0.0.1:18181/v1/models");
     res.json(response.data);
   } catch (error: any) {
@@ -202,8 +215,7 @@ app.post("/api/greenhouse/search", async (req: Request, res: Response) => {
         if (targetCountry) {
           normalizedCountry = await normalizeCountry(targetCountry, model, baseUrl);
         }
-        const intentOptions = { ...getEffectiveQueryOptions(), keyword, location: "Any", targetCountry: normalizedCountry };
-        const effectiveGoal = goal || await generateJobDescription(intentOptions, model, baseUrl);
+        const effectiveGoal = goal || await generateGreenhouseJobGoal(keyword, normalizedCountry, model, baseUrl);
 
         const aiResult = await filterJobsWithAI(allJobs, effectiveGoal, model, baseUrl);
         topPicks = aiResult.filteredJobs;
@@ -294,6 +306,86 @@ app.post("/api/greenhouse/deep-summary", async (req: Request, res: Response) => 
     console.log(`[AI] [RELOAD] Regenerating Executive Summary...`);
     const summary = await summarizeJobRole(cleanContent, model, baseUrl);
     res.json({ summary });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * Isolated rating generation.
+ */
+app.post("/api/greenhouse/deep-rating", async (req: Request, res: Response) => {
+  try {
+    const { content, searchGoal, model, baseUrl } = req.body;
+    if (!content) return res.status(400).json({ error: "Content missing" });
+    const cleanContent = content.replace(/<[^>]*>?/gm, ' ');
+    const rating = await rateJobCompatibility(cleanContent, searchGoal, model, baseUrl);
+    res.json(rating);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * Isolated culture generation.
+ */
+app.post("/api/greenhouse/deep-culture", async (req: Request, res: Response) => {
+  try {
+    const { content, model, baseUrl } = req.body;
+    if (!content) return res.status(400).json({ error: "Content missing" });
+    const cleanContent = content.replace(/<[^>]*>?/gm, ' ');
+    const culture = await analyzeJobCultureAndBenefits(cleanContent, model, baseUrl);
+    res.json({ culture });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * Isolated pros/cons generation.
+ */
+app.post("/api/greenhouse/deep-pros-cons", async (req: Request, res: Response) => {
+  try {
+    const { content, model, baseUrl } = req.body;
+    if (!content) return res.status(400).json({ error: "Content missing" });
+    const cleanContent = content.replace(/<[^>]*>?/gm, ' ');
+    const prosCons = await analyzeJobProsAndCons(cleanContent, model, baseUrl);
+    res.json(prosCons);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * Isolated quotes generation.
+ */
+app.post("/api/greenhouse/deep-quotes", async (req: Request, res: Response) => {
+  try {
+    const { content, model, baseUrl } = req.body;
+    if (!content) return res.status(400).json({ error: "Content missing" });
+    const cleanContent = content.replace(/<[^>]*>?/gm, ' ');
+    const quotes = await extractJobQuotes(cleanContent, model, baseUrl);
+    res.json({ quotes });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * Refresh search goal summary.
+ */
+app.post("/api/ai/goal/refresh", async (req: Request, res: Response) => {
+  try {
+    const { model, baseUrl, isGreenhouse, keyword, targetCountry, ...clientOptions } = req.body;
+    
+    if (isGreenhouse) {
+      const goal = await generateGreenhouseJobGoal(keyword, targetCountry, model, baseUrl);
+      return res.json(goal);
+    }
+    
+    const queryOptions = { ...getEffectiveQueryOptions(), ...clientOptions, keyword, targetCountry };
+    const goal = await generateJobDescription(queryOptions, model, baseUrl);
+    res.json(goal);
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }

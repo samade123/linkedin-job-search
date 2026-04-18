@@ -88,11 +88,18 @@
 
                     <!-- Reasons Section -->
                     <div class="space-y-4">
-                        <div class="flex items-center gap-2 text-slate-900">
-                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
-                            <h3 class="text-xs font-bold uppercase tracking-widest text-slate-400">Analysis Breakdown</h3>
+                        <div class="flex items-center justify-between text-slate-900">
+                            <div class="flex items-center gap-2">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                                <h3 class="text-xs font-bold uppercase tracking-widest text-slate-400">Analysis Breakdown</h3>
+                            </div>
+                            <button @click="onReloadRating" :disabled="isReloadingRating" class="p-1.5 hover:bg-slate-100 rounded-lg transition-all text-slate-400 hover:text-slate-900" title="Regenerate Analysis">
+                                <svg :class="['w-3.5 h-3.5', isReloadingRating ? 'animate-spin' : '']" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m0 0H15"></path>
+                                </svg>
+                            </button>
                         </div>
-                        <ul class="space-y-3">
+                        <ul :class="['space-y-3 transition-opacity', isReloadingRating ? 'opacity-50' : '']">
                             <li v-for="(reason, idx) in analysis.reasons" :key="idx" class="flex items-start gap-4 p-4 rounded-xl border border-slate-100 hover:border-slate-200 transition-all">
                                 <div class="mt-1 flex-shrink-0 w-1.5 h-1.5 rounded-full bg-slate-900"></div>
                                 <span class="text-sm text-slate-600 font-medium" v-html="formatReport(reason)"></span>
@@ -102,11 +109,18 @@
 
                     <!-- Key Quotes Section -->
                     <div v-if="analysis.quotes" class="space-y-4">
-                        <div class="flex items-center gap-2 text-slate-900">
-                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z"></path></svg>
-                            <h3 class="text-xs font-bold uppercase tracking-widest text-slate-400">Key Quotes</h3>
+                        <div class="flex items-center justify-between text-slate-900">
+                            <div class="flex items-center gap-2">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z"></path></svg>
+                                <h3 class="text-xs font-bold uppercase tracking-widest text-slate-400">Key Quotes</h3>
+                            </div>
+                            <button @click="onReloadQuotes" :disabled="isReloadingQuotes" class="p-1.5 hover:bg-slate-100 rounded-lg transition-all text-slate-400 hover:text-slate-900" title="Regenerate Quotes">
+                                <svg :class="['w-3.5 h-3.5', isReloadingQuotes ? 'animate-spin' : '']" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m0 0H15"></path>
+                                </svg>
+                            </button>
                         </div>
-                        <div class="space-y-4">
+                        <div :class="['space-y-4 transition-opacity', isReloadingQuotes ? 'opacity-50' : '']">
                             <blockquote v-for="(quote, idx) in analysis.quotes" :key="idx" class="border-l-4 border-slate-200 pl-4 py-1">
                                 <p class="text-sm italic text-slate-600 font-medium leading-relaxed">
                                     "{{ quote }}"
@@ -117,38 +131,58 @@
 
                     <!-- Culture & Benefits Section -->
                     <div v-if="analysis.culture" class="space-y-4">
-                        <div class="flex items-center gap-2 text-slate-900">
-                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-7.714 2.143L11 21l-2.286-6.857L1 12l7.714-2.143L11 3z"></path></svg>
-                            <h3 class="text-xs font-bold uppercase tracking-widest text-slate-400">Culture & Benefits</h3>
+                        <div class="flex items-center justify-between text-slate-900">
+                            <div class="flex items-center gap-2">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-7.714 2.143L11 21l-2.286-6.857L1 12l7.714-2.143L11 3z"></path></svg>
+                                <h3 class="text-xs font-bold uppercase tracking-widest text-slate-400">Culture & Benefits</h3>
+                            </div>
+                            <button @click="onReloadCulture" :disabled="isReloadingCulture" class="p-1.5 hover:bg-slate-100 rounded-lg transition-all text-slate-400 hover:text-slate-900" title="Regenerate Culture">
+                                <svg :class="['w-3.5 h-3.5', isReloadingCulture ? 'animate-spin' : '']" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m0 0H15"></path>
+                                </svg>
+                            </button>
                         </div>
-                        <p class="text-slate-700 leading-relaxed font-medium bg-slate-50 p-6 rounded-xl border border-slate-100 italic quote-style" v-html="formatReport(analysis.culture)"></p>
+                        <p :class="['text-slate-700 leading-relaxed font-medium bg-slate-50 p-6 rounded-xl border border-slate-100 italic quote-style transition-opacity', isReloadingCulture ? 'opacity-50' : '']" v-html="formatReport(analysis.culture)"></p>
                     </div>
 
                     <!-- Pros & Cons Grid -->
-                    <div v-if="analysis.pros || analysis.cons" class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <div v-if="analysis.pros" class="space-y-4">
-                            <h3 class="text-[10px] font-bold uppercase tracking-[0.2em] text-emerald-600 flex items-center gap-2">
-                                <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-                                Strategic Pros
-                            </h3>
-                            <ul class="space-y-2">
-                                <li v-for="(pro, idx) in analysis.pros" :key="idx" class="text-xs font-semibold text-slate-600 flex items-start gap-2">
-                                    <span class="text-emerald-500 font-bold">+</span>
-                                    <span v-html="formatReport(pro)"></span>
-                                </li>
-                            </ul>
+                    <div v-if="analysis.pros || analysis.cons" class="space-y-4">
+                        <div class="flex items-center justify-between text-slate-900">
+                            <div class="flex items-center gap-2">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"></path></svg>
+                                <h3 class="text-xs font-bold uppercase tracking-widest text-slate-400">Strategic Overview</h3>
+                            </div>
+                            <button @click="onReloadProsCons" :disabled="isReloadingProsCons" class="p-1.5 hover:bg-slate-100 rounded-lg transition-all text-slate-400 hover:text-slate-900" title="Regenerate Pros & Cons">
+                                <svg :class="['w-3.5 h-3.5', isReloadingProsCons ? 'animate-spin' : '']" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m0 0H15"></path>
+                                </svg>
+                            </button>
                         </div>
-                        <div v-if="analysis.cons" class="space-y-4">
-                            <h3 class="text-[10px] font-bold uppercase tracking-[0.2em] text-amber-600 flex items-center gap-2">
-                                <span class="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
-                                Potential Cons
-                            </h3>
-                            <ul class="space-y-2">
-                                <li v-for="(con, idx) in analysis.cons" :key="idx" class="text-xs font-semibold text-slate-600 flex items-start gap-2">
-                                    <span class="text-amber-500">!</span>
-                                    <span v-html="formatReport(con)"></span>
-                                </li>
-                            </ul>
+                        <div :class="['grid grid-cols-1 md:grid-cols-2 gap-6 transition-opacity', isReloadingProsCons ? 'opacity-50' : '']">
+                            <div v-if="analysis.pros" class="space-y-4">
+                                <h3 class="text-[10px] font-bold uppercase tracking-[0.2em] text-emerald-600 flex items-center gap-2">
+                                    <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                                    Strategic Pros
+                                </h3>
+                                <ul class="space-y-2">
+                                    <li v-for="(pro, idx) in analysis.pros" :key="idx" class="text-xs font-semibold text-slate-600 flex items-start gap-2">
+                                        <span class="text-emerald-500 font-bold">+</span>
+                                        <span v-html="formatReport(pro)"></span>
+                                    </li>
+                                </ul>
+                            </div>
+                            <div v-if="analysis.cons" class="space-y-4">
+                                <h3 class="text-[10px] font-bold uppercase tracking-[0.2em] text-amber-600 flex items-center gap-2">
+                                    <span class="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
+                                    Potential Cons
+                                </h3>
+                                <ul class="space-y-2">
+                                    <li v-for="(con, idx) in analysis.cons" :key="idx" class="text-xs font-semibold text-slate-600 flex items-start gap-2">
+                                        <span class="text-amber-500">!</span>
+                                        <span v-html="formatReport(con)"></span>
+                                    </li>
+                                </ul>
+                            </div>
                         </div>
                     </div>
                 </template>
@@ -185,9 +219,20 @@ const props = defineProps({
     } | null
 });
 
-const emit = defineEmits(['close', 'reload-summary']);
+const emit = defineEmits([
+    'close', 
+    'reload-summary', 
+    'reload-rating', 
+    'reload-culture', 
+    'reload-pros-cons', 
+    'reload-quotes'
+]);
 
 const isReloadingSummary = ref(false);
+const isReloadingRating = ref(false);
+const isReloadingCulture = ref(false);
+const isReloadingProsCons = ref(false);
+const isReloadingQuotes = ref(false);
 
 const isSummaryFailed = computed(() => {
     if (!props.analysis?.summary) return false;
@@ -205,11 +250,31 @@ const hasFailures = computed(() => {
 const onReload = async () => {
     isReloadingSummary.value = true;
     emit('reload-summary');
-    // The parent handles the actual fetch, but we manage the loading UI state locally
-    // We'll reset it after a period or if needed we can watch props
-    setTimeout(() => {
-        isReloadingSummary.value = false;
-    }, 2000);
+    setTimeout(() => { isReloadingSummary.value = false; }, 2000);
+};
+
+const onReloadRating = async () => {
+    isReloadingRating.value = true;
+    emit('reload-rating');
+    setTimeout(() => { isReloadingRating.value = false; }, 2000);
+};
+
+const onReloadCulture = async () => {
+    isReloadingCulture.value = true;
+    emit('reload-culture');
+    setTimeout(() => { isReloadingCulture.value = false; }, 2000);
+};
+
+const onReloadProsCons = async () => {
+    isReloadingProsCons.value = true;
+    emit('reload-pros-cons');
+    setTimeout(() => { isReloadingProsCons.value = false; }, 2000);
+};
+
+const onReloadQuotes = async () => {
+    isReloadingQuotes.value = true;
+    emit('reload-quotes');
+    setTimeout(() => { isReloadingQuotes.value = false; }, 2000);
 };
 
 const formatReport = (text: string) => {

@@ -8,6 +8,11 @@
                 <h4 class="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em] mb-0.5">Executive Summary</h4>
                 <p class="text-[10px] text-slate-600 font-medium">Strategic Search Parameters Identified</p>
             </div>
+            <button @click="$emit('reload')" :disabled="loading" class="ml-auto p-1.5 hover:bg-slate-100 rounded-lg transition-all text-slate-400 hover:text-slate-900" title="Regenerate Search Goal">
+                <svg :class="['w-3.5 h-3.5', loading ? 'animate-spin' : '']" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m0 0H15"></path>
+                </svg>
+            </button>
         </div>
         <div class="space-y-6">
             <p class="text-lg font-medium leading-relaxed text-slate-800">{{ goal.summary }}</p>
@@ -34,6 +39,12 @@ defineProps({
     goal: {
         type: Object as () => { summary: string; titles?: string[]; relatedTitles?: string[] } | null,
         default: null
+    },
+    loading: {
+        type: Boolean,
+        default: false
     }
 });
+
+defineEmits(['reload']);
 </script>

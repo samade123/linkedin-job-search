@@ -1,10 +1,11 @@
 import axios from "axios";
 import { Job, QueryOptions, SearchGoal } from "../types";
 import { cleanJobText } from "../utils";
+import { DEFAULT_AI_MODEL, DEFAULT_AI_BASE_URL } from "../config";
 
 const BATCH_SIZE = 20;
-export const DEFAULT_AI_MODEL = "NexaAI/OmniNeural-4B";
-export const DEFAULT_BASE_URL = "http://localhost:8001/v1";
+const DEFAULT_BASE_URL = DEFAULT_AI_BASE_URL;
+export { DEFAULT_AI_MODEL, DEFAULT_BASE_URL };
 
 // ---------------------------------------------------------------------------
 // Global AI request queue.
@@ -188,6 +189,62 @@ Rules:
     }
   } catch (error) {
     console.warn("Unexpected error in generateJobDescription:", error);
+  }
+  return fallbackGoal;
+}
+
+/**
+ * Generates a structured JSON summary specifically tailored for Greenhouse Job Boards.
+ */
+export async function generateGreenhouseJobGoal(
+  keyword: string,
+  targetCountry: string = "Any",
+  model: string = DEFAULT_AI_MODEL,
+  baseUrl: string = DEFAULT_AI_BASE_URL,
+): Promise<SearchGoal> {
+  const fallbackGoal: SearchGoal = {
+    summary: `Searching for ${keyword}${targetCountry ? ` in ${targetCountry}` : ""}.`,
+    titles: [keyword],
+    relatedTitles: [],
+  };
+
+  try {
+    const payload = {
+      messages: [
+        {
+          role: "system",
+          content: `You are a specialist recruiter focusing on company-specific job boards (Greenhouse). 
+          Summarize the user's intent for searching a SPECIFIC company's openings.
+          
+          Strict JSON format requirements:
+          {
+            "summary": "A descriptive paragraph (2-3 sentences) summarizing the intent. Mention that we are targeting this specific company's board for ${keyword} roles.",
+            "titles": ["List of 3-4 specific job titles that might exist on a corporate board for this keyword."],
+            "relatedTitles": ["List of at least 8 adjacent role titles that might also be listed on the same board (e.g., if searching for 'Engineer', include 'Software Engineer', 'Systems Architect', 'Lead Dev', etc.)."]
+          }
+          
+          Rules:
+          1. **Corporate Context**: Frame the summary as a targeted search within a single company's ecosystem.
+          2. **Inclusive Adjacency**: The 'relatedTitles' must expand the reach within the company's hierarchy.
+          3. **Format**: Output ONLY the raw JSON object.`,
+        },
+        {
+          role: "user",
+          content: `Generate a search goal for this Greenhouse board search:
+          - Target Keywords: ${keyword}
+          - Target Country: ${targetCountry}`,
+        },
+      ],
+      temperature: 0.1,
+      max_tokens: 500,
+    };
+
+    const parsed = await callAiWithJsonRetry<SearchGoal>(model, baseUrl, payload, "Greenhouse SearchGoal JSON");
+    if (parsed && parsed.summary && Array.isArray(parsed.titles) && Array.isArray(parsed.relatedTitles)) {
+      return parsed;
+    }
+  } catch (error) {
+    console.warn("Unexpected error in generateGreenhouseJobGoal:", error);
   }
   return fallbackGoal;
 }

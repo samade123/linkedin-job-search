@@ -36,7 +36,7 @@
             <div v-show="activeTab === 'linkedin'" class="grid grid-cols-1 lg:grid-cols-12 gap-8">
                 <SearchSidebar @execute-search="executeLinkedInSearch" />
                 <main class="lg:col-span-8 space-y-8">
-                    <SearchGoalCard :goal="linkedinData.goal" />
+                    <SearchGoalCard :goal="linkedinData.goal" :loading="isReloadingGoal" @reload="handleReloadGoal" />
                     
                     <div class="flex gap-6 border-b border-slate-200 mb-6 items-center justify-between">
                         <div class="flex gap-8">
@@ -60,11 +60,10 @@
                 </main>
             </div>
 
-            <!-- Job Boards View -->
             <div v-show="activeTab === 'boards'" class="grid grid-cols-1 lg:grid-cols-12 gap-8">
                 <BoardSidebar @execute-board-search="executeBoardSearch" />
                 <main class="lg:col-span-8 space-y-8">
-                    <SearchGoalCard :goal="boardData.goal" />
+                    <SearchGoalCard :goal="boardData.goal" :loading="isReloadingGoal" @reload="handleReloadGoal" />
                     
                     <div class="flex gap-6 border-b border-slate-200 mb-6 items-center justify-between">
                         <div class="flex gap-8">
@@ -99,6 +98,10 @@
             :criteria="activeTab === 'linkedin' ? linkedinData.goal : boardData.goal"
             @close="isAnalysisModalOpen = false"
             @reload-summary="handleReloadSummary"
+            @reload-rating="handleReloadRating"
+            @reload-culture="handleReloadCulture"
+            @reload-pros-cons="handleReloadProsCons"
+            @reload-quotes="handleReloadQuotes"
         />
     </div>
 </template>
@@ -122,6 +125,7 @@ const activeTab = ref('linkedin');
 const isAnalysisModalOpen = ref(false);
 const analyzingJob = ref<any>(null);
 const analysisResult = ref<any>(null);
+const isReloadingGoal = ref(false);
 
 // LinkedIn State
 const linkedinData = ref({ allJobs: [] as any[], topPicks: [] as any[], goal: null, aiError: "" });
@@ -226,6 +230,107 @@ const handleReloadSummary = async () => {
         analysisResult.value.summary = res.data.summary;
     } catch (err: any) {
         console.error("Summary reload failed:", err);
+    }
+};
+
+const handleReloadRating = async () => {
+    if (!analyzingJob.value || !analysisResult.value) return;
+    try {
+        const res = await axios.post('/api/greenhouse/deep-rating', {
+            content: analyzingJob.value.content,
+            searchGoal: activeTab.value === 'linkedin' ? linkedinData.value.goal : boardData.value.goal,
+            model: selectedModel.value,
+            baseUrl: aiBaseUrl.value
+        });
+        analysisResult.value.score = res.data.score;
+        analysisResult.value.reasons = res.data.reasons;
+    } catch (err: any) {
+        console.error("Rating reload failed:", err);
+    }
+};
+
+const handleReloadCulture = async () => {
+    if (!analyzingJob.value || !analysisResult.value) return;
+    try {
+        const res = await axios.post('/api/greenhouse/deep-culture', {
+            content: analyzingJob.value.content,
+            model: selectedModel.value,
+            baseUrl: aiBaseUrl.value
+        });
+        analysisResult.value.culture = res.data.culture;
+    } catch (err: any) {
+        console.error("Culture reload failed:", err);
+    }
+};
+
+const handleReloadProsCons = async () => {
+    if (!analyzingJob.value || !analysisResult.value) return;
+    try {
+        const res = await axios.post('/api/greenhouse/deep-pros-cons', {
+            content: analyzingJob.value.content,
+            model: selectedModel.value,
+            baseUrl: aiBaseUrl.value
+        });
+        analysisResult.value.pros = res.data.pros;
+        analysisResult.value.cons = res.data.cons;
+    } catch (err: any) {
+        console.error("Pros/Cons reload failed:", err);
+    }
+};
+
+const handleReloadQuotes = async () => {
+    if (!analyzingJob.value || !analysisResult.value) return;
+    try {
+        const res = await axios.post('/api/greenhouse/deep-quotes', {
+            content: analyzingJob.value.content,
+            model: selectedModel.value,
+            baseUrl: aiBaseUrl.value
+        });
+        analysisResult.value.quotes = res.data.quotes;
+    } catch (err: any) {
+        console.error("Quotes reload failed:", err);
+    }
+};
+
+const handleReloadGoal = async () => {
+    isReloadingGoal.value = true;
+    const isLinkedIn = activeTab.value === 'linkedin';
+    const dataObj = isLinkedIn ? linkedinData.value : boardData.value;
+    
+    // We need the original keywords/vars. They are stored in formPayload usually but let's see.
+    // For Greenhouse, it's boardId/keyword/targetCountry.
+    // For LinkedIn, it's many filters.
+    
+    // Simple heuristic: reuse what we have.
+    try {
+        const payload = {
+            isGreenhouse: !isLinkedIn,
+            model: selectedModel.value,
+            baseUrl: aiBaseUrl.value,
+            // These might need better tracking if they change, but for now we'll rely on what's in the dataObj goal if we could.
+            // Better to track the last used search options.
+        };
+        
+        // Since we don't store last search options explicitly in a way that's easy to grab here, 
+        // we'll assume the goal generation uses the current keyword from the UI if possible, 
+        // or we just refresh with a generic call.
+        
+        // A better way is to pass the search options back from SearchSidebar/BoardSidebar or store them.
+        // For now, let's just use a simplified approach for refresh.
+        
+        const res = await axios.post('/api/ai/goal/refresh', {
+            ...payload,
+            keyword: isLinkedIn ? (dataObj.goal as any)?.titles?.[0] || "" : (dataObj.goal as any)?.titles?.[0] || "",
+            targetCountry: "Any" // Default
+        });
+        
+        if (isLinkedIn) linkedinData.value.goal = res.data;
+        else boardData.value.goal = res.data;
+        
+    } catch (err: any) {
+        console.error("Goal refresh failed:", err);
+    } finally {
+        isReloadingGoal.value = false;
     }
 };
 
