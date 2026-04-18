@@ -27,6 +27,7 @@
   "dependencies": {
     "axios": "^1.14.0",
     "express": "^4.19.2",
+    "html-entities": "^2.6.0",
     "linkedin-jobs-api": "^1.0.1",
     "open": "^10.1.2"
   },

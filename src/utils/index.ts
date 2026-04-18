@@ -1,4 +1,4 @@
-// src/utils/index.ts
+import { decode } from "html-entities";
 
 /**
  * Escapes HTML characters for safe display.
@@ -13,14 +13,23 @@ export function escapeHtml(unsafe: string): string {
 }
 
 /**
- * Cleans job text by removing extra whitespace, literal newlines,
- * and fixing broken spacing between characters.
+ * Cleans job text for use in LLM prompts and display.
+ *
+ * Decodes HTML entities, strips tags, and normalises whitespace.
+ * Must be applied to all content received from external ATS APIs
+ * (Greenhouse, Lever, Workday, etc.) before it enters state, prompts,
+ * or logs.
  */
 export function cleanJobText(text: string): string {
-  if (!text) return "";
-  // 1. Remove literal newlines and tabs
-  let cleaned = text.replace(/[\\r\\n\\t]+/g, " ");
-  // 3. Normalize multiple spaces
-  cleaned = cleaned.replace(/\s+/g, " ").trim();
-  return cleaned;
+  if (!text || typeof text !== "string") return "";
+
+  // Step 1: Decode HTML entities (&lt; → < , &quot; → " , &amp; → & , etc.)
+  const decoded = decode(text);
+
+  // Step 2: Strip remaining HTML tags
+  const stripped = decoded.replace(/<[^>]+>/g, " ");
+
+  // Step 3: Normalise whitespace
+  return stripped.replace(/\s+/g, " ").trim();
 }
+

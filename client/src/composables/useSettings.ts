@@ -1,7 +1,7 @@
 import { ref, watch } from 'vue';
 
 const selectedModel = ref(localStorage.getItem('selectedModel') || "NexaAI/OmniNeural-4B");
-const aiBaseUrl = ref(localStorage.getItem('aiBaseUrl') || "http://127.0.0.1:18181/v1");
+const aiBaseUrl = ref(localStorage.getItem('aiBaseUrl') || "http://localhost:8001/v1");
 const isSettingsOpen = ref(false);
 
 watch(selectedModel, (val) => {

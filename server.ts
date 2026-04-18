@@ -8,20 +8,21 @@ import open from "open";
 // Import modules
 import { Job } from "./src/types";
 import { getEffectiveQueryOptions } from "./src/args";
-import { 
-  filterJobsWithAI, 
-  generateJobDescription, 
+import {
+  filterJobsWithAI,
+  generateJobDescription,
   generateGreenhouseJobGoal,
-  optimizeSearchKeywords, 
-  normalizeCountry, 
-  summarizeJobRole, 
-  rateJobCompatibility, 
-  analyzeJobCultureAndBenefits, 
-  analyzeJobProsAndCons, 
-  extractJobQuotes, 
-  runAiDiagnostics 
+  optimizeSearchKeywords,
+  normalizeCountry,
+  summarizeJobRole,
+  rateJobCompatibility,
+  analyzeJobCultureAndBenefits,
+  analyzeJobProsAndCons,
+  extractJobQuotes,
+  runAiDiagnostics,
 } from "./src/services/aiService";
 import { PORT, DEFAULT_AI_MODEL, DEFAULT_AI_BASE_URL as DEFAULT_BASE_URL } from "./src/config";
+import { cleanJobText } from "./src/utils";
 
 const app = express();
 
@@ -31,7 +32,6 @@ const PUBLIC_PATH = path.resolve(process.cwd(), "client/dist");
 app.use(express.static(PUBLIC_PATH));
 
 console.log(`[FILES] Static files served from: ${PUBLIC_PATH}`);
-
 
 /**
  * AI Warm-up endpoint to pre-load models.
@@ -54,7 +54,6 @@ app.get("/api/models", async (req: Request, res: Response) => {
   try {
     const modelsUrl = `${DEFAULT_BASE_URL.replace(/\/$/, "")}/models`;
     const response = await axios.get(modelsUrl);
-    // const response = await axios.get("http://127.0.0.1:18181/v1/models");
     res.json(response.data);
   } catch (error: any) {
     console.warn("Failed to fetch models from local AI server:", error.message);
@@ -93,7 +92,7 @@ app.post("/api/search", async (req: Request, res: Response) => {
     }
     const queryOptions = { ...getEffectiveQueryOptions(), ...clientOptions, targetCountry: normalizedCountry };
 
-    console.log(`[START] API Search: "${queryOptions.keyword}" (${queryOptions.location || 'Global'})`);
+    console.log(`[START] API Search: "${queryOptions.keyword}" (${queryOptions.location || "Global"})`);
 
     // 1. AI Keyword Optimization Stage
     let originalKeyword = queryOptions.keyword;
@@ -129,12 +128,12 @@ app.post("/api/search", async (req: Request, res: Response) => {
 
     if (allJobs.length > 0) {
       console.log(`[DATA] Jobs Found: ${allJobs.length}. Starting AI Filtering...`);
-      
+
       // 3. AI Filtering Stage
       console.time("[TIME] AI Goal & Filtering");
       try {
         const intentOptions = { ...queryOptions, keyword: originalKeyword };
-        const effectiveGoal = goal || await generateJobDescription(intentOptions, model, baseUrl);
+        const effectiveGoal = goal || (await generateJobDescription(intentOptions, model, baseUrl));
 
         const aiResult = await filterJobsWithAI(allJobs, effectiveGoal, model, baseUrl);
         topPicks = aiResult.filteredJobs;
@@ -152,9 +151,8 @@ app.post("/api/search", async (req: Request, res: Response) => {
     res.json({
       allJobs,
       topPicks,
-      aiError: aiErrorMessage
+      aiError: aiErrorMessage,
     });
-
   } catch (error: any) {
     console.error("API Search Error:", error);
     res.status(500).json({ error: error.message });
@@ -175,7 +173,7 @@ app.post("/api/greenhouse/search", async (req: Request, res: Response) => {
     try {
       const gRes = await axios.get(`https://boards-api.greenhouse.io/v1/boards/${boardId}/jobs?content=true`);
       const rawJobs = gRes.data.jobs || [];
-      
+
       const formatTimeAgo = (dateStr: string) => {
         const date = new Date(dateStr);
         const diffMs = Date.now() - date.getTime();
@@ -184,19 +182,17 @@ app.post("/api/greenhouse/search", async (req: Request, res: Response) => {
         if (diffDays === 1) return "1 day ago";
         return `${diffDays} days ago`;
       };
-      
+
       allJobs = rawJobs.map((j: any) => ({
         id: j.id,
-        position: j.title || "Unknown",
-        company: j.company_name || boardId,
-        location: j.location?.name || "Unknown",
+        position: cleanJobText(j.title || "Unknown"),
+        company: cleanJobText(j.company_name || boardId),
+        location: cleanJobText(j.location?.name || "Unknown"),
         date: j.updated_at || "",
         agoTime: j.updated_at ? formatTimeAgo(j.updated_at) : "",
         jobUrl: j.absolute_url || "",
-        content: j.content || ""
+        content: cleanJobText(j.content || ""),
       }));
-
-
     } catch (crawlError: any) {
       console.error(`[ERROR] Greenhouse Crawl ERROR: ${crawlError.message}`);
       return res.status(500).json({ error: "Failed to fetch from Greenhouse" });
@@ -215,7 +211,7 @@ app.post("/api/greenhouse/search", async (req: Request, res: Response) => {
         if (targetCountry) {
           normalizedCountry = await normalizeCountry(targetCountry, model, baseUrl);
         }
-        const effectiveGoal = goal || await generateGreenhouseJobGoal(keyword, normalizedCountry, model, baseUrl);
+        const effectiveGoal = goal || (await generateGreenhouseJobGoal(keyword, normalizedCountry, model, baseUrl));
 
         const aiResult = await filterJobsWithAI(allJobs, effectiveGoal, model, baseUrl);
         topPicks = aiResult.filteredJobs;
@@ -233,9 +229,8 @@ app.post("/api/greenhouse/search", async (req: Request, res: Response) => {
     res.json({
       allJobs,
       topPicks,
-      aiError: aiErrorMessage
+      aiError: aiErrorMessage,
     });
-
   } catch (error: any) {
     console.error("API Greenhouse Search Error:", error);
     res.status(500).json({ error: error.message });
@@ -255,14 +250,14 @@ app.post("/api/greenhouse/deep-analyze", async (req: Request, res: Response) => 
       return res.status(400).json({ error: "Job content is missing." });
     }
 
-    // Strip HTML for the AI
-    const cleanContent = content.replace(/<[^>]*>?/gm, ' ');
+    // Robust HTML decoding and tag stripping
+    const cleanContent = cleanJobText(content);
 
     console.time("[TIME] AI Deep Analysis (Sequential)");
-    
+
     // Pass 1: Summarize
     const summary = await summarizeJobRole(cleanContent, model, baseUrl);
-    
+
     // Pass 2: Rate
     const rating = await rateJobCompatibility(cleanContent, searchGoal, model, baseUrl);
 
@@ -274,7 +269,7 @@ app.post("/api/greenhouse/deep-analyze", async (req: Request, res: Response) => 
 
     // Pass 5: Direct Quotes
     const quotes = await extractJobQuotes(cleanContent, model, baseUrl);
-    
+
     console.timeEnd("[TIME] AI Deep Analysis (Sequential)");
 
     res.json({
@@ -284,9 +279,8 @@ app.post("/api/greenhouse/deep-analyze", async (req: Request, res: Response) => 
       culture: cultureBenefits,
       pros: prosCons.pros,
       cons: prosCons.cons,
-      quotes: quotes
+      quotes: quotes,
     });
-
   } catch (error: any) {
     console.error("Deep Analyze Error:", error);
     res.status(500).json({ error: error.message });
@@ -300,9 +294,9 @@ app.post("/api/greenhouse/deep-summary", async (req: Request, res: Response) => 
   try {
     const { content, model, baseUrl } = req.body;
     if (!content) return res.status(400).json({ error: "Job content is missing." });
-    
-    // Strip HTML
-    const cleanContent = content.replace(/<[^>]*>?/gm, ' ');
+
+    // Robust HTML decoding and tag stripping
+    const cleanContent = cleanJobText(content);
     console.log(`[AI] [RELOAD] Regenerating Executive Summary...`);
     const summary = await summarizeJobRole(cleanContent, model, baseUrl);
     res.json({ summary });
@@ -318,7 +312,7 @@ app.post("/api/greenhouse/deep-rating", async (req: Request, res: Response) => {
   try {
     const { content, searchGoal, model, baseUrl } = req.body;
     if (!content) return res.status(400).json({ error: "Content missing" });
-    const cleanContent = content.replace(/<[^>]*>?/gm, ' ');
+    const cleanContent = cleanJobText(content);
     const rating = await rateJobCompatibility(cleanContent, searchGoal, model, baseUrl);
     res.json(rating);
   } catch (error: any) {
@@ -333,7 +327,7 @@ app.post("/api/greenhouse/deep-culture", async (req: Request, res: Response) => 
   try {
     const { content, model, baseUrl } = req.body;
     if (!content) return res.status(400).json({ error: "Content missing" });
-    const cleanContent = content.replace(/<[^>]*>?/gm, ' ');
+    const cleanContent = cleanJobText(content);
     const culture = await analyzeJobCultureAndBenefits(cleanContent, model, baseUrl);
     res.json({ culture });
   } catch (error: any) {
@@ -348,7 +342,7 @@ app.post("/api/greenhouse/deep-pros-cons", async (req: Request, res: Response) =
   try {
     const { content, model, baseUrl } = req.body;
     if (!content) return res.status(400).json({ error: "Content missing" });
-    const cleanContent = content.replace(/<[^>]*>?/gm, ' ');
+    const cleanContent = cleanJobText(content);
     const prosCons = await analyzeJobProsAndCons(cleanContent, model, baseUrl);
     res.json(prosCons);
   } catch (error: any) {
@@ -363,7 +357,7 @@ app.post("/api/greenhouse/deep-quotes", async (req: Request, res: Response) => {
   try {
     const { content, model, baseUrl } = req.body;
     if (!content) return res.status(400).json({ error: "Content missing" });
-    const cleanContent = content.replace(/<[^>]*>?/gm, ' ');
+    const cleanContent = cleanJobText(content);
     const quotes = await extractJobQuotes(cleanContent, model, baseUrl);
     res.json({ quotes });
   } catch (error: any) {
@@ -377,12 +371,12 @@ app.post("/api/greenhouse/deep-quotes", async (req: Request, res: Response) => {
 app.post("/api/ai/goal/refresh", async (req: Request, res: Response) => {
   try {
     const { model, baseUrl, isGreenhouse, keyword, targetCountry, ...clientOptions } = req.body;
-    
+
     if (isGreenhouse) {
       const goal = await generateGreenhouseJobGoal(keyword, targetCountry, model, baseUrl);
       return res.json(goal);
     }
-    
+
     const queryOptions = { ...getEffectiveQueryOptions(), ...clientOptions, keyword, targetCountry };
     const goal = await generateJobDescription(queryOptions, model, baseUrl);
     res.json(goal);
@@ -390,7 +384,6 @@ app.post("/api/ai/goal/refresh", async (req: Request, res: Response) => {
     res.status(500).json({ error: error.message });
   }
 });
-
 
 /**
  * AI Diagnostic endpoint.
@@ -405,7 +398,6 @@ app.post("/api/ai/diagnostics", async (req: Request, res: Response) => {
     res.status(500).json({ error: error.message });
   }
 });
-
 
 /**
  * Health check endpoint
@@ -426,15 +418,15 @@ app.get("*", (req: Request, res: Response) => {
 
 // Start the server
 app.listen(PORT, async () => {
-    console.log(`\n[SERVER] Server is running on http://localhost:${PORT}`);
-    console.log(`[WEB] Dashboard: http://localhost:${PORT}\n`);
-    
-    // Background warm-up
-    console.log("[WARMUP] Initializing AI Warm-up sequence...");
-    optimizeSearchKeywords("warmup", DEFAULT_AI_MODEL, DEFAULT_BASE_URL)
-        .then(() => console.log("[DONE] AI Model is warm and ready!"))
-        .catch(err => console.warn("[WARN] Initial AI warm-up failed (Server may be offline)."));
+  console.log(`\n[SERVER] Server is running on http://localhost:${PORT}`);
+  console.log(`[WEB] Dashboard: http://localhost:${PORT}\n`);
+
+  // Background warm-up
+  console.log("[WARMUP] Initializing AI Warm-up sequence...");
+  optimizeSearchKeywords("warmup", DEFAULT_AI_MODEL, DEFAULT_BASE_URL)
+    .then(() => console.log("[DONE] AI Model is warm and ready!"))
+    .catch((err) => console.warn("[WARN] Initial AI warm-up failed (Server may be offline)."));
 
   // Open browser to the UI
-  open(`http://localhost:${PORT}`).catch(err => console.error("Failed to open browser:", err));
+  open(`http://localhost:${PORT}`).catch((err) => console.error("Failed to open browser:", err));
 });

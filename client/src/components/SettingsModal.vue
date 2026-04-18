@@ -16,7 +16,7 @@
             <div class="p-8 space-y-5">
                 <div class="space-y-1.5">
                     <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest">Inference Endpoint</label>
-                    <input type="text" v-model="localAiBaseUrl" placeholder="http://127.0.0.1:18181/v1" class="w-full bg-slate-50 border border-slate-200 rounded-lg px-4 py-2.5 text-xs text-slate-900 focus:ring-1 focus:ring-slate-900 outline-none transition-all font-mono">
+                    <input type="text" v-model="localAiBaseUrl" placeholder="http://localhost:8001/v1" class="w-full bg-slate-50 border border-slate-200 rounded-lg px-4 py-2.5 text-xs text-slate-900 focus:ring-1 focus:ring-slate-900 outline-none transition-all font-mono">
                 </div>
                 <div class="space-y-1.5">
                     <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest">Active Model ID</label>

@@ -15,7 +15,7 @@
             </button>
         </div>
         <div class="space-y-6">
-            <p class="text-lg font-medium leading-relaxed text-slate-800">{{ goal.summary }}</p>
+            <div class="text-lg font-medium leading-relaxed text-slate-800 prose-sm" v-html="renderMarkdown(goal.summary)"></div>
             <div v-if="goal.titles && goal.titles.length > 0" class="pt-6 border-t border-slate-100">
                 <p class="text-[9px] font-bold text-slate-500 uppercase tracking-widest mb-4">Primary Target Roles</p>
                 <div class="flex flex-wrap gap-2">
@@ -33,6 +33,7 @@
 </template>
 
 <script setup lang="ts">
+import { marked } from 'marked';
 
 
 defineProps({
@@ -47,4 +48,9 @@ defineProps({
 });
 
 defineEmits(['reload']);
+
+const renderMarkdown = (text: string) => {
+    if (!text) return '';
+    return marked.parse(text, { async: false });
+};
 </script>

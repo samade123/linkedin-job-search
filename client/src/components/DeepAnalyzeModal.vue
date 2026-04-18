@@ -80,9 +80,7 @@
                                 <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
                                 Pass Failed
                             </div>
-                            <p class="text-slate-700 leading-relaxed font-medium">
-                                {{ analysis.summary }}
-                            </p>
+                            <div class="text-slate-700 leading-relaxed font-medium prose-sm" v-html="formatReport(analysis.summary)"></div>
                         </div>
                     </div>
 
@@ -142,7 +140,7 @@
                                 </svg>
                             </button>
                         </div>
-                        <p :class="['text-slate-700 leading-relaxed font-medium bg-slate-50 p-6 rounded-xl border border-slate-100 italic quote-style transition-opacity', isReloadingCulture ? 'opacity-50' : '']" v-html="formatReport(analysis.culture)"></p>
+                        <div :class="['text-slate-700 leading-relaxed font-medium bg-slate-50 p-6 rounded-xl border border-slate-100 italic quote-style transition-opacity prose-sm', isReloadingCulture ? 'opacity-50' : '']" v-html="formatReport(analysis.culture)"></div>
                     </div>
 
                     <!-- Pros & Cons Grid -->
@@ -200,6 +198,7 @@
 
 <script setup lang="ts">
 import { ref, computed } from 'vue';
+import { marked } from 'marked';
 
 const props = defineProps({
     isOpen: Boolean,
@@ -279,8 +278,6 @@ const onReloadQuotes = async () => {
 
 const formatReport = (text: string) => {
     if (!text) return '';
-    return text
-        .replace(/\*\*(.*?)\*\*/g, '<b class="text-slate-900">$1</b>')
-        .replace(/\*(.*?)\*/g, '<i class="text-slate-500">$1</i>');
+    return marked.parse(text, { async: false });
 };
 </script>

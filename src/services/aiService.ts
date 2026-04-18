@@ -462,7 +462,7 @@ export async function normalizeCountry(
   }
 
   // If a request for this key is already in-flight, reuse it.
-  if ( await countryInflight[safeCountry]) {
+  if (countryInflight[safeCountry] !== undefined) {
     console.log(`[NORM] Deduplicating in-flight request for "${safeCountry}"`);
     return countryInflight[safeCountry];
   }
@@ -523,7 +523,7 @@ export async function normalizeCountry(
 function thinJobContent(text: string): string {
   if (!text) return "";
 
-  let clean = text.replace(/\s+/g, " ").trim();
+  let clean = cleanJobText(text);
 
   const patterns = [
     /responsibilit\w+/i,

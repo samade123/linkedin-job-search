@@ -21,7 +21,7 @@ A high-fidelity, intelligent LinkedIn job search engine built with Node.js, Type
 
 - **Node.js**: v18.0.0 or higher.
 - **Nexa AI Local Server**: The application expects an AI inference server running locally (compatible with Llama/OmniNeural models).
-  - Default Endpoint: `http://127.0.0.1:18181/v1`
+  - Default Endpoint: `http://localhost:8001/v1`
   - Recommended Model: `NexaAI/OmniNeural-4B`
 
 ---
