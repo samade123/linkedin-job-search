@@ -6,7 +6,7 @@ import {
   filterJobsWithAI 
 } from "../services/ai";
 import { Job } from "../types";
-import { cleanJobText } from "../utils";
+import { normalizeJob } from "../utils/normalizeJob";
 
 const router = Router();
 
@@ -15,33 +15,22 @@ const router = Router();
  */
 router.post("/greenhouse/search", async (req: Request, res: Response) => {
   try {
-    const { boardId, keyword, model, baseUrl, goal } = req.body;
-    
+    const { boardId, keyword, model, baseUrl, goal, targetCountry } = req.body;
     let allJobs: Job[] = [];
+
     try {
       const gRes = await axios.get(`https://boards-api.greenhouse.io/v1/boards/${boardId}/jobs?content=true`);
       const rawJobs = gRes.data.jobs || [];
+      
+      console.log(`[Greenhouse] Board: ${boardId} | Raw jobs: ${rawJobs.length}`);
+      
+      allJobs = rawJobs.map((j: any) => normalizeJob(j, "greenhouse"));
 
-      const formatTimeAgo = (dateStr: string): string => {
-        const date = new Date(dateStr);
-        const diffMs = Date.now() - date.getTime();
-        const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-        if (diffDays === 0) return "Today";
-        if (diffDays === 1) return "1 day ago";
-        return `${diffDays} days ago`;
-      };
-
-      allJobs = rawJobs.map((j: any) => ({
-        id: j.id,
-        position: cleanJobText(j.title || "Unknown"),
-        company: cleanJobText(j.company_name || boardId),
-        location: cleanJobText(j.location?.name || "Unknown"),
-        date: j.updated_at || "",
-        agoTime: j.updated_at ? formatTimeAgo(j.updated_at) : "",
-        jobUrl: j.absolute_url || "",
-        content: cleanJobText(j.content || ""),
-      }));
+      if (allJobs.length > 0) {
+        console.log(`[DEBUG] Greenhouse Job 0 descriptionHtml Sample: ${allJobs[0].descriptionHtml?.substring(0, 100)}...`);
+      }
     } catch (crawlError: any) {
+      console.error("[Greenhouse] Fetch failed:", crawlError.message);
       return res.status(500).json({ error: "Failed to fetch from Greenhouse" });
     }
 
@@ -50,22 +39,21 @@ router.post("/greenhouse/search", async (req: Request, res: Response) => {
 
     if (allJobs.length > 0) {
       try {
-        const { targetCountry } = req.body;
-        let normalizedCountry = targetCountry;
-        if (targetCountry) {
-          normalizedCountry = await normalizeCountry(targetCountry, model, baseUrl);
-        }
+        const normalizedCountry = targetCountry ? await normalizeCountry(targetCountry, model, baseUrl) : targetCountry;
         const effectiveGoal = goal || (await generateCompanyJobGoal(keyword, "Greenhouse", normalizedCountry, model, baseUrl));
+
         const aiResult = await filterJobsWithAI(allJobs, effectiveGoal, model, baseUrl);
         topPicks = aiResult.filteredJobs;
         aiErrorMessage = aiResult.errorMessage;
       } catch (aiError: any) {
+        console.error("[ERROR] AI Processing ERROR:", aiError.message);
         aiErrorMessage = `AI Error: ${aiError.message}`;
       }
     }
 
     res.json({ allJobs, topPicks, aiError: aiErrorMessage });
   } catch (error: any) {
+    console.error("Board Search Error:", error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -75,33 +63,22 @@ router.post("/greenhouse/search", async (req: Request, res: Response) => {
  */
 router.post("/ashby/search", async (req: Request, res: Response) => {
   try {
-    const { boardId, keyword, model, baseUrl, goal } = req.body;
-
+    const { boardId, keyword, model, baseUrl, goal, targetCountry } = req.body;
     let allJobs: Job[] = [];
+
     try {
       const aRes = await axios.get(`https://api.ashbyhq.com/posting-api/job-board/${boardId}?includeCompensation=false`);
       const rawJobs = aRes.data.jobs || [];
+      
+      console.log(`[Ashby] Board: ${boardId} | Raw jobs: ${rawJobs.length}`);
+      
+      allJobs = rawJobs.map((j: any) => normalizeJob(j, "ashby"));
 
-      const formatTimeAgo = (dateStr: string): string => {
-        const date = new Date(dateStr);
-        const diffMs = Date.now() - date.getTime();
-        const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-        if (diffDays === 0) return "Today";
-        if (diffDays === 1) return "1 day ago";
-        return `${diffDays} days ago`;
-      };
-
-      allJobs = rawJobs.map((j: any) => ({
-        id: j.id,
-        position: cleanJobText(j.title || "Unknown"),
-        company: cleanJobText(j.team || boardId),
-        location: cleanJobText(j.location || "Unknown"),
-        date: j.publishedAt || "",
-        agoTime: j.publishedAt ? formatTimeAgo(j.publishedAt) : "",
-        jobUrl: j.jobUrl || "",
-        content: cleanJobText(j.descriptionHtml || ""),
-      }));
+      if (allJobs.length > 0) {
+        console.log(`[DEBUG] Ashby Job 0 descriptionHtml Sample: ${allJobs[0].descriptionHtml?.substring(0, 100)}...`);
+      }
     } catch (crawlError: any) {
+      console.error("[Ashby] Fetch failed:", crawlError.message);
       return res.status(500).json({ error: "Failed to fetch from Ashby" });
     }
 
@@ -110,22 +87,70 @@ router.post("/ashby/search", async (req: Request, res: Response) => {
 
     if (allJobs.length > 0) {
       try {
-        const { targetCountry } = req.body;
-        let normalizedCountry = targetCountry;
-        if (targetCountry) {
-          normalizedCountry = await normalizeCountry(targetCountry, model, baseUrl);
-        }
+        const normalizedCountry = targetCountry ? await normalizeCountry(targetCountry, model, baseUrl) : targetCountry;
         const effectiveGoal = goal || (await generateCompanyJobGoal(keyword, "Ashby", normalizedCountry, model, baseUrl));
+
         const aiResult = await filterJobsWithAI(allJobs, effectiveGoal, model, baseUrl);
         topPicks = aiResult.filteredJobs;
         aiErrorMessage = aiResult.errorMessage;
       } catch (aiError: any) {
+        console.error("[ERROR] AI Processing ERROR:", aiError.message);
         aiErrorMessage = `AI Error: ${aiError.message}`;
       }
     }
 
     res.json({ allJobs, topPicks, aiError: aiErrorMessage });
   } catch (error: any) {
+    console.error("Board Search Error:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * Workable Search
+ */
+router.post("/workable/search", async (req: Request, res: Response) => {
+  try {
+    const { boardId, keyword, model, baseUrl, goal, targetCountry } = req.body;
+    let allJobs: Job[] = [];
+
+    try {
+      const wRes = await axios.get(`https://apply.workable.com/api/v1/widget/accounts/${boardId}?details=true`);
+      const rawJobs = wRes.data.jobs || [];
+      const accountName = wRes.data.name || boardId;
+      
+      console.log(`[Workable] Board: ${boardId} | Raw jobs: ${rawJobs.length}`);
+      
+      allJobs = rawJobs.map((j: any) => normalizeJob({ ...j, accountName }, "workable"));
+
+      if (allJobs.length > 0) {
+        console.log(`[DEBUG] Workable Job 0 descriptionHtml Sample: ${allJobs[0].descriptionHtml?.substring(0, 100)}...`);
+      }
+    } catch (crawlError: any) {
+      console.error("[Workable] Fetch failed:", crawlError.message);
+      return res.status(500).json({ error: "Failed to fetch from Workable" });
+    }
+
+    let topPicks: Job[] = [];
+    let aiErrorMessage = "";
+
+    if (allJobs.length > 0) {
+      try {
+        const normalizedCountry = targetCountry ? await normalizeCountry(targetCountry, model, baseUrl) : targetCountry;
+        const effectiveGoal = goal || (await generateCompanyJobGoal(keyword, "Workable", normalizedCountry, model, baseUrl));
+
+        const aiResult = await filterJobsWithAI(allJobs, effectiveGoal, model, baseUrl);
+        topPicks = aiResult.filteredJobs;
+        aiErrorMessage = aiResult.errorMessage;
+      } catch (aiError: any) {
+        console.error("[ERROR] AI Processing ERROR:", aiError.message);
+        aiErrorMessage = `AI Error: ${aiError.message}`;
+      }
+    }
+
+    res.json({ allJobs, topPicks, aiError: aiErrorMessage });
+  } catch (error: any) {
+    console.error("Board Search Error:", error);
     res.status(500).json({ error: error.message });
   }
 });

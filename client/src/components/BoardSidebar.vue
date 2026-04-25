@@ -16,6 +16,7 @@
                         class="w-full bg-slate-50 border border-slate-200 rounded-lg px-4 py-2 text-sm focus:ring-1 focus:ring-slate-900 outline-none transition-all mb-3">
                         <option value="greenhouse">Greenhouse</option>
                         <option value="ashby">Ashby</option>
+                        <option value="workable">Workable</option>
                     </select>
                 </div>
                 <div class="space-y-1.5">
@@ -123,15 +124,25 @@ const addBoard = async () => {
     try {
         const validationUrl = type === 'greenhouse'
             ? `https://boards-api.greenhouse.io/v1/boards/${newId}/jobs`
-            : `https://api.ashbyhq.com/posting-api/job-board/${newId}?includeCompensation=false`;
+            : type === 'ashby'
+                ? `https://api.ashbyhq.com/posting-api/job-board/${newId}?includeCompensation=false`
+                : `https://apply.workable.com/api/v1/widget/accounts/${newId}?details=true`;
 
         const res = await fetch(validationUrl);
         if (!res.ok) {
             throw new Error(`Board not found (Status: ${res.status})`);
         }
         const data = await res.json();
-        if (data.error || !data.jobs) {
-            throw new Error(`Invalid ${type} Board structure detected.`);
+
+        // Validation logic for each type
+        if (type === 'greenhouse' && (!data.jobs)) {
+            throw new Error("Invalid Greenhouse Board structure.");
+        }
+        if (type === 'ashby' && (!data.jobs)) {
+            throw new Error("Invalid Ashby Board structure.");
+        }
+        if (type === 'workable' && (!data.jobs && !data.description)) {
+            throw new Error("Invalid Workable Board structure.");
         }
 
         myBoards.value.push({ id: newId, type });

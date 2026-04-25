@@ -26,10 +26,15 @@ export function cleanJobText(text: string): string {
   // Step 1: Decode HTML entities (&lt; → < , &quot; → " , &amp; → & , etc.)
   const decoded = decode(text);
 
-  // Step 2: Strip remaining HTML tags
+  // Step 2: Strip HTML tags
   const stripped = decoded.replace(/<[^>]+>/g, " ");
 
-  // Step 3: Normalise whitespace
-  return stripped.replace(/\s+/g, " ").trim();
+  // Step 3: Normalise horizontal whitespace but preserve newlines and tabs
+  // (We replace non-newline whitespace with single spaces)
+  return stripped
+    .replace(/[ \t\r\f\v]+/g, " ") 
+    .replace(/ \n/g, "\n")
+    .replace(/\n /g, "\n")
+    .trim();
 }
 
